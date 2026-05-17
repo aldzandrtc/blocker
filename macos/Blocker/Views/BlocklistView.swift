@@ -6,6 +6,7 @@ struct BlocklistView: View {
 
     @State private var showingAddSheet = false
     @State private var addTab: AddTab = .website
+    @State private var targetToRemove: BlockedTarget?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -50,7 +51,7 @@ struct BlocklistView: View {
                                     Text(target.category == .strict ? "Make Regular" : "Make Strict")
                                 }
                                 Button(role: .destructive) {
-                                    settings.removeTarget(target.id)
+                                    targetToRemove = target
                                 } label: {
                                     Text("Remove")
                                 }
@@ -75,6 +76,16 @@ struct BlocklistView: View {
         .sheet(isPresented: $showingAddSheet) {
             AddTargetView(settings: settings, isPresented: $showingAddSheet)
                 .frame(width: 400, height: 300)
+        }
+        .sheet(item: $targetToRemove) { target in
+            RemoveGatekeeperSheet(
+                target: target,
+                settings: settings,
+                isPresented: Binding(
+                    get: { targetToRemove != nil },
+                    set: { if !$0 { targetToRemove = nil } }
+                )
+            )
         }
     }
 

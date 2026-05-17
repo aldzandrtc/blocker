@@ -4,6 +4,9 @@ const label = params.get('label') || domain;
 const category = params.get('category') || 'regular';
 const originalUrl = params.get('original') || '';
 
+const JUDGE_TIME = 120; // 2-minute limit to argue with judge
+let judgeTimer = null;
+
 // --- Init ---
 
 (async () => {
@@ -31,12 +34,52 @@ function show(id) { document.getElementById(id).classList.remove('hidden'); }
 function hide(id) { document.getElementById(id).classList.add('hidden'); }
 function el(id) { return document.getElementById(id); }
 
+// --- Timer ---
+
+function startTimer() {
+  let remaining = JUDGE_TIME;
+  const display = el('judge-timer');
+  display.textContent = formatTime(remaining);
+  display.classList.remove('hidden');
+
+  judgeTimer = setInterval(() => {
+    remaining--;
+    display.textContent = formatTime(remaining);
+    if (remaining <= 30) display.style.color = '#f87171';
+    if (remaining <= 0) {
+      clearInterval(judgeTimer);
+      judgeTimer = null;
+      autoDeny();
+    }
+  }, 1000);
+}
+
+function stopTimer() {
+  if (judgeTimer) {
+    clearInterval(judgeTimer);
+    judgeTimer = null;
+  }
+  el('judge-timer').classList.add('hidden');
+}
+
+function formatTime(s) {
+  const m = Math.floor(s / 60);
+  const sec = s % 60;
+  return `${m}:${String(sec).padStart(2, '0')}`;
+}
+
+function autoDeny() {
+  hide('judge-section');
+  showResult(false, 'Time expired — access denied automatically.');
+}
+
 // --- Judge Flow ---
 
 function initJudge() {
   hide('loading');
   show('judge-section');
   el('judge-domain').textContent = label;
+  startTimer();
 
   const textarea = el('argument');
   const submit = el('judge-submit');
@@ -52,6 +95,7 @@ function initJudge() {
   });
 
   submit.addEventListener('click', async () => {
+    stopTimer();
     submit.disabled = true;
     submit.textContent = 'Judging...';
 
@@ -62,11 +106,12 @@ function initJudge() {
     });
 
     if (result.allowed) {
+      hide('judge-section');
       showResult(true, result.reason);
-      hide('judge-section');
+      setTimeout(() => { location.href = originalUrl; }, 2000);
     } else {
-      showResult(false, result.reason);
       hide('judge-section');
+      showResult(false, result.reason);
     }
   });
 }
@@ -118,9 +163,9 @@ async function initProblem() {
     });
 
     if (result.correct) {
-      showResult(true, 'Correct! Redirecting to your page...');
+      showResult(true, 'Correct! Redirecting...');
       hide('problem-section');
-      setTimeout(() => { location.href = originalUrl; }, 1500);
+      setTimeout(() => { location.href = originalUrl; }, 2000);
     } else {
       showResult(false, result.explanation || 'Incorrect answer.');
       hide('problem-section');
@@ -134,6 +179,7 @@ async function initProblem() {
 
 function showResult(success, message) {
   show('result-section');
+  stopTimer();
   const icon = el('result-icon');
   const title = el('result-title');
   const box = el('result-box');
@@ -154,7 +200,6 @@ function showResult(success, message) {
     if (success && originalUrl) {
       location.href = originalUrl;
     } else {
-      // Go back or close tab
       history.back();
     }
   });
