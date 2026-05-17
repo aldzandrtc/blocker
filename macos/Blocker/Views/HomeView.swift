@@ -145,9 +145,10 @@ struct HomeView: View {
 
             if showInstallHelp {
                 VStack(alignment: .leading, spacing: 6) {
-                    step(1, "Open", "chrome://extensions")
-                    step(2, "Toggle", "Developer mode ON (top right)")
-                    step(3, "Click", "Load unpacked → select the BlockerChromeExt folder")
+                    step(1, "Clone or download", "the repo from GitHub")
+                    step(2, "Open", "chrome://extensions and toggle Developer mode ON")
+                    step(3, "Navigate to", "macos/Blocker/ChromeExt/ in the repo")
+                    step(4, "Click Load unpacked", "and select the ChromeExt folder")
                 }
                 .padding(.top, 4)
             }
