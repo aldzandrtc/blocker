@@ -132,6 +132,15 @@ async function initProblem() {
   show('problem-section');
   el('problem-text').textContent = problem.problem;
   el('topic-label').textContent = `Topic: ${problem.topic}`;
+  if (typeof renderMathInElement !== 'undefined') {
+    renderMathInElement(el('problem-text'), {
+      delimiters: [
+        {left:'$$',right:'$$',display:true},
+        {left:'$',right:'$',display:false}
+      ],
+      throwOnError: false
+    });
+  }
 
   const input = el('answer');
   const submit = el('problem-submit');

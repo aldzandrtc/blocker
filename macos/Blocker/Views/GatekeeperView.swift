@@ -7,6 +7,7 @@ struct GatekeeperView: View {
     @State private var answer: String = ""
     @State private var isBusy = false
     @State private var timeRemaining = 120
+    @State private var problemHeight: CGFloat = 100
 
     private let judgeTimeLimit = 120
 
@@ -149,10 +150,8 @@ struct GatekeeperView: View {
             Text("Academic Problem")
                 .font(.title2)
 
-            Text(.init(problem.problem))
-                .font(.body)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal)
+            LaTeXWebView(text: problem.problem, dynamicHeight: $problemHeight)
+                .frame(height: max(problemHeight, 60))
 
             TextField("Your answer", text: $answer)
                 .textFieldStyle(.roundedBorder)
