@@ -3,36 +3,71 @@ import Observation
 
 @Observable
 final class SettingsStore {
-    var apiKey: String = ""
-    var apiEndpoint: String = "https://api.anthropic.com/v1/messages"
-    var model: String = "claude-sonnet-4-6"
+    var selectedProvider: AIProvider = .anthropic
+    var providerKeys: [AIProvider: String] = [:]
+    var providerModels: [AIProvider: String] = [:]
+    var providerEndpoints: [AIProvider: String] = [:]
+
     var profile = StudentProfile()
     var blockedTargets: [BlockedTarget] = []
     var problemHistory: [ProblemRecord] = []
 
+    // Extension detection (session-only, not persisted)
+    var lastExtensionContact: Date? = nil
+    var extensionConnected: Bool {
+        guard let last = lastExtensionContact else { return false }
+        return Date().timeIntervalSince(last) < 300 // seen within 5 min
+    }
+
+    // Computed from selected provider
+    var apiKey: String {
+        get { providerKeys[selectedProvider] ?? "" }
+        set { providerKeys[selectedProvider] = newValue }
+    }
+
+    var apiEndpoint: String {
+        get { providerEndpoints[selectedProvider] ?? selectedProvider.defaultEndpoint }
+        set { providerEndpoints[selectedProvider] = newValue }
+    }
+
+    var model: String {
+        get { providerModels[selectedProvider] ?? selectedProvider.defaultModel }
+        set { providerModels[selectedProvider] = newValue }
+    }
+
     var hasApiKey: Bool { !apiKey.isEmpty }
 
-    // MARK: - Init
-
     init() { load() }
+
+    // MARK: - Provider helpers
+
+    func isProviderConfigured(_ provider: AIProvider) -> Bool {
+        !(providerKeys[provider] ?? "").isEmpty
+    }
+
+    func effectiveModel(for provider: AIProvider) -> String {
+        providerModels[provider] ?? provider.defaultModel
+    }
 
     // MARK: - Blocklist
 
     func addApp(bundleID: String, name: String, path: String) {
         guard !blockedTargets.contains(where: {
-            if case .app(let id, _, _) = $0 { return id == bundleID }
+            if case .app(let id, _, _) = $0.kind { return id == bundleID }
             return false
         }) else { return }
-        blockedTargets.append(.app(bundleID: bundleID, name: name, path: path))
+        blockedTargets.append(BlockedTarget(
+            kind: .app(bundleID: bundleID, name: name, path: path)))
         save()
     }
 
     func addWebsite(domain: String, label: String) {
         guard !blockedTargets.contains(where: {
-            if case .website(let d, _) = $0 { return d == domain }
+            if case .website(let d, _) = $0.kind { return d == domain }
             return false
         }) else { return }
-        blockedTargets.append(.website(domain: domain, label: label))
+        blockedTargets.append(BlockedTarget(
+            kind: .website(domain: domain, label: label)))
         save()
     }
 
@@ -55,29 +90,28 @@ final class SettingsStore {
 
     func isOnBlocklist(bundleID: String) -> Bool {
         blockedTargets.contains {
-            if case .app(let id, _, _) = $0 { return id == bundleID }
+            if case .app(let id, _, _) = $0.kind { return id == bundleID }
             return false
         }
     }
 
     func isOnBlocklist(domain: String) -> Bool {
         blockedTargets.contains {
-            if case .website(let d, _) = $0 { return d == domain }
+            if case .website(let d, _) = $0.kind { return d == domain }
             return false
         }
     }
 
     func categoryFor(bundleID: String) -> BlockedTarget.Category? {
         for t in blockedTargets {
-            if case .app(let id, _, _) = t, id == bundleID { return t.category }
+            if case .app(let id, _, _) = t.kind, id == bundleID { return t.category }
         }
         return nil
     }
 
-    // Websites for Chrome extension sync
     var websiteTargets: [BlockedTarget] {
         blockedTargets.filter {
-            if case .website = $0 { return true }
+            if case .website = $0.kind { return true }
             return false
         }
     }
@@ -114,32 +148,85 @@ final class SettingsStore {
     private func load() {
         guard let data = try? Data(contentsOf: Self.settingsURL()),
               let decoded = try? JSONDecoder().decode(SettingsData.self, from: data) else { return }
+        let hadLegacyKey = decoded.apiKey != nil && !(decoded.apiKey?.isEmpty ?? true)
+        let hadProviderKeys = !decoded.providerKeys.isEmpty
         decoded.apply(to: self)
+        if hadLegacyKey && !hadProviderKeys {
+            save() // persist migration to new format
+        }
     }
 }
 
-// Codable snapshot for persistence
+// Codable snapshot for persistence.
+// Uses String-keyed dicts internally so JSON is readable objects, not flat arrays.
 private struct SettingsData: Codable {
-    var apiKey: String
-    var apiEndpoint: String
-    var model: String
+    var apiKey: String?
+    var apiEndpoint: String?
+    var model: String?
+    var selectedProvider: AIProvider = .anthropic
+    var providerKeys: [String: String] = [:]
+    var providerModels: [String: String] = [:]
+    var providerEndpoints: [String: String] = [:]
+
     var profile: StudentProfile
     var blockedTargets: [BlockedTarget]
     var problemHistory: [ProblemRecord]
 
+    enum CodingKeys: String, CodingKey {
+        case apiKey, apiEndpoint, model, selectedProvider
+        case providerKeys, providerModels, providerEndpoints
+        case profile, blockedTargets, problemHistory
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        apiKey = try c.decodeIfPresent(String.self, forKey: .apiKey)
+        apiEndpoint = try c.decodeIfPresent(String.self, forKey: .apiEndpoint)
+        model = try c.decodeIfPresent(String.self, forKey: .model)
+        selectedProvider = try c.decodeIfPresent(AIProvider.self, forKey: .selectedProvider) ?? .anthropic
+        providerKeys = try c.decodeIfPresent([String: String].self, forKey: .providerKeys) ?? [:]
+        providerModels = try c.decodeIfPresent([String: String].self, forKey: .providerModels) ?? [:]
+        providerEndpoints = try c.decodeIfPresent([String: String].self, forKey: .providerEndpoints) ?? [:]
+        profile = try c.decode(StudentProfile.self, forKey: .profile)
+        blockedTargets = try c.decode([BlockedTarget].self, forKey: .blockedTargets)
+        problemHistory = try c.decode([ProblemRecord].self, forKey: .problemHistory)
+    }
+
     init(from store: SettingsStore) {
-        apiKey = store.apiKey
-        apiEndpoint = store.apiEndpoint
-        model = store.model
+        apiKey = nil
+        apiEndpoint = nil
+        model = nil
+        selectedProvider = store.selectedProvider
+        providerKeys = store.providerKeys.reduce(into: [:]) { $0[$1.key.rawValue] = $1.value }
+        providerModels = store.providerModels.reduce(into: [:]) { $0[$1.key.rawValue] = $1.value }
+        providerEndpoints = store.providerEndpoints.reduce(into: [:]) { $0[$1.key.rawValue] = $1.value }
         profile = store.profile
         blockedTargets = store.blockedTargets
         problemHistory = store.problemHistory
     }
 
     func apply(to store: SettingsStore) {
-        store.apiKey = apiKey
-        store.apiEndpoint = apiEndpoint
-        store.model = model
+        // Migration: old-format apiKey → providerKeys
+        if let oldKey = apiKey, !oldKey.isEmpty, providerKeys.isEmpty {
+            store.providerKeys[.anthropic] = oldKey
+        }
+        if let oldModel = model, !oldModel.isEmpty, providerModels.isEmpty {
+            store.providerModels[.anthropic] = oldModel
+        }
+
+        store.selectedProvider = selectedProvider
+        for (key, value) in providerKeys {
+            guard let p = AIProvider(rawValue: key) else { continue }
+            store.providerKeys[p] = value
+        }
+        for (key, value) in providerModels {
+            guard let p = AIProvider(rawValue: key) else { continue }
+            store.providerModels[p] = value
+        }
+        for (key, value) in providerEndpoints {
+            guard let p = AIProvider(rawValue: key) else { continue }
+            store.providerEndpoints[p] = value
+        }
         store.profile = profile
         store.blockedTargets = blockedTargets
         store.problemHistory = problemHistory

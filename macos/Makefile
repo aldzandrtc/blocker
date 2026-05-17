@@ -1,61 +1,38 @@
-CXX = clang++
-CXXFLAGS = -std=c++17 -Wall -O2
-LDFLAGS = -framework Foundation -framework AppKit -framework CoreFoundation
+# Blocker macOS App — Swift + SPM
+APP_NAME := Blocker
+BUILD_DIR := .build
+APP_BUNDLE := $(BUILD_DIR)/$(APP_NAME).app
 
-SRC_DIR = src
-BUILD_DIR = build
-INSTALL_DIR = $(HOME)/.local/bin
-PLIST_SRC = com.blocker.blockerd.plist
-PLIST_DST = $(HOME)/Library/LaunchAgents/com.blocker.blockerd.plist
+.PHONY: all build app run debug clean kill cpp launch
 
-# CLI sources (minimal dependencies)
-CLI_SRCS = $(SRC_DIR)/main.cpp $(SRC_DIR)/settings_store.cpp
-CLI_OBJS = $(patsubst $(SRC_DIR)/%.cpp,$(BUILD_DIR)/%.o,$(CLI_SRCS))
+all: app
 
-# Daemon sources (full dependencies)
-DAEMON_SRCS = $(SRC_DIR)/blockerd.cpp \
-              $(SRC_DIR)/settings_store.cpp \
-              $(SRC_DIR)/ai_client.cpp \
-              $(SRC_DIR)/blocklist_judge.cpp \
-              $(SRC_DIR)/problem_generator.cpp \
-              $(SRC_DIR)/app_blocker.cpp \
-              $(SRC_DIR)/workspace_bridge.mm
-DAEMON_OBJS = $(patsubst $(SRC_DIR)/%.cpp,$(BUILD_DIR)/%.o,$(filter %.cpp,$(DAEMON_SRCS))) \
-              $(patsubst $(SRC_DIR)/%.mm,$(BUILD_DIR)/%.o,$(filter %.mm,$(DAEMON_SRCS)))
+build:
+	swift build -c release
 
-.PHONY: all install clean
+# Builds .app to /Applications, ChromeExt to ~/Desktop/BlockerChromeExt
+app: build
+	./scripts/package-app.sh
 
-all: $(BUILD_DIR)/blocker $(BUILD_DIR)/blockerd
+# Opens the app from /Applications (bypasses Finder Gatekeeper)
+launch: app
+	open "/Applications/$(APP_NAME).app"
 
-$(BUILD_DIR):
-	mkdir -p $(BUILD_DIR)
+run: build
+	swift run -c release
 
-# CLI
-$(BUILD_DIR)/blocker: $(CLI_OBJS) | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -o $@ $(CLI_OBJS)
+debug:
+	swift run
 
-# Daemon
-$(BUILD_DIR)/blockerd: $(DAEMON_OBJS) | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -o $@ $(DAEMON_OBJS) $(LDFLAGS)
-
-# C++ compilation
-$(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -c -o $@ $<
-
-# Objective-C++ compilation (with ARC)
-$(BUILD_DIR)/%.o: $(SRC_DIR)/%.mm | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) -fobjc-arc -c -o $@ $<
-
-install: all
-	mkdir -p $(INSTALL_DIR)
-	mkdir -p $(HOME)/.local/log
-	mkdir -p $(HOME)/Library/LaunchAgents
-	cp $(BUILD_DIR)/blocker $(INSTALL_DIR)/blocker
-	cp $(BUILD_DIR)/blockerd $(INSTALL_DIR)/blockerd
-	sed 's|$$HOME|$(HOME)|g' $(PLIST_SRC) > $(PLIST_DST)
-	@echo "Installed blocker and blockerd to $(INSTALL_DIR)"
-	@echo "LaunchAgent installed to $(PLIST_DST)"
-	@echo "Run 'blocker setup' to configure, then 'blocker start'."
+kill:
+	pkill -9 -f Blocker 2>/dev/null || true
 
 clean:
 	rm -rf $(BUILD_DIR)
+	pkill -9 -f Blocker 2>/dev/null || true
+
+# Legacy C++ daemon (kept as reference)
+cpp:
+	mkdir -p build && cd build && clang++ -std=c++17 -Wall -O2 \
+		-framework Foundation -framework AppKit \
+		../src/main.cpp ../src/settings_store.cpp -o blocker_cli

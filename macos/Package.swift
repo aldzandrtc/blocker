@@ -7,7 +7,8 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "Blocker",
-            path: "Blocker"
+            path: "Blocker",
+            exclude: ["Resources", "ChromeExt"]
         )
     ]
 )

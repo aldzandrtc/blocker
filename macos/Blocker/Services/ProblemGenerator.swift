@@ -1,6 +1,6 @@
 import Foundation
 
-struct GeneratedProblem {
+struct GeneratedProblem: Codable, Equatable {
     let problem: String
     let answer: String
     let answerType: String // numeric, expression, mc
