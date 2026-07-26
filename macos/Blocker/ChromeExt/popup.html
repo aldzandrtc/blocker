@@ -4,83 +4,119 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Blocker</title>
+<link rel="stylesheet" href="theme.css">
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    width: 300px;
-    min-height: 200px;
-    background: #0d0d0d;
-    color: #e0e0e0;
-    padding: 16px;
+  body { width: 330px; padding: 0 16px 14px; }
+
+  .masthead-bar {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 15px 0 9px;
   }
-  .header {
+  .masthead-bar .masthead { font-size: 15px; }
+  .masthead-bar .state { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+  .mark { width: 5px; height: 5px; flex: none; }
+  .mark.on { background: var(--verdigris); }
+  .mark.off { background: var(--seal); }
+
+  .status-line {
+    font-size: 12px;
+    color: var(--muted);
+    padding: 11px 0;
+    line-height: 1.5;
+  }
+  .status-line b { font-family: var(--serif); font-weight: 600; color: var(--ink); }
+
+  .granted-note {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    color: var(--verdigris);
+    padding-bottom: 11px;
+  }
+
+  section { padding-top: 14px; }
+
+  .row {
     display: flex;
     align-items: center;
-    gap: 8px;
-    margin-bottom: 16px;
+    gap: 10px;
+    padding: 8px 0;
   }
-  .header h1 { font-size: 18px; color: #fff; }
-  .status {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 12px;
-    border-radius: 8px;
-    margin-bottom: 12px;
+  .row .no {
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--faint);
+    flex: none;
+  }
+  .row .who { flex: 1; min-width: 0; }
+  .row .name {
+    font-size: 12.5px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .row .host {
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--faint);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .none {
+    font-family: var(--serif);
     font-size: 13px;
+    color: var(--faint);
+    padding: 22px 0;
+    text-align: center;
   }
-  .status.connected { background: rgba(34,197,94,0.15); color: #22c55e; }
-  .status.disconnected { background: rgba(239,68,68,0.15); color: #ef4444; }
-  .dot {
-    width: 8px; height: 8px;
-    border-radius: 50%;
-    display: inline-block;
-  }
-  .dot.green { background: #22c55e; }
-  .dot.red { background: #ef4444; }
-  .section { margin-top: 12px; }
-  .section h2 { font-size: 14px; color: #888; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
-  .item {
+
+  .colophon {
     display: flex;
-    align-items: center;
     justify-content: space-between;
-    padding: 6px 0;
-    border-bottom: 1px solid #1a1a1a;
-    font-size: 13px;
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--faint);
+    padding-top: 13px;
+    margin-top: 4px;
+    border-top: 1px solid var(--rule-faint);
   }
-  .item:last-child { border-bottom: none; }
-  .tag {
-    font-size: 11px;
-    padding: 2px 8px;
-    border-radius: 10px;
-    font-weight: 600;
-  }
-  .tag.strict { background: rgba(239,68,68,0.2); color: #f87171; }
-  .tag.regular { background: rgba(99,102,241,0.2); color: #818cf8; }
-  .empty { color: #666; font-size: 13px; text-align: center; padding: 12px; }
-  .footer { margin-top: 16px; font-size: 11px; color: #555; text-align: center; }
 </style>
 </head>
 <body>
-<div class="header">
-  <span>🛡️</span>
-  <h1>Blocker</h1>
-</div>
 
-<div class="status" id="status">
-  <span class="dot" id="status-dot"></span>
-  <span id="status-text">Checking...</span>
+<div class="masthead-bar">
+  <span class="masthead">BLOCKER</span>
+  <span class="state">
+    <span class="clerk" id="status-word">…</span>
+    <span class="mark" id="status-mark"></span>
+  </span>
 </div>
+<div class="rule-heavy"></div>
 
-<div class="section">
-  <h2>Blocked Sites</h2>
-  <div id="blocklist">
-    <p class="empty">Loading...</p>
+<p class="status-line" id="status-line"></p>
+<p class="granted-note hidden" id="granted-note"></p>
+
+<section>
+  <div class="section-rule">
+    <span class="clerk">Under injunction</span>
+    <span class="docket" id="count"></span>
   </div>
+  <div id="blocklist">
+    <p class="none">Loading…</p>
+  </div>
+</section>
+
+<div class="colophon">
+  <span>Blocker v1.0</span>
+  <span id="sync-label"></span>
 </div>
 
-<div class="footer">Blocker v1.0</div>
 <script src="popup.js"></script>
 </body>
 </html>

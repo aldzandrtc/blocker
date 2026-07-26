@@ -26,6 +26,7 @@ struct GatekeeperChallenge: Identifiable {
     var phase: Phase = .starting
 }
 
+@MainActor
 @Observable
 final class AppBlockerService {
     private let store: SettingsStore
@@ -44,7 +45,7 @@ final class AppBlockerService {
             forName: NSWorkspace.didLaunchApplicationNotification,
             object: nil, queue: .main
         ) { [weak self] note in
-            self?.handleAppLaunch(note)
+            MainActor.assumeIsolated { self?.handleAppLaunch(note) }
         }
     }
 
@@ -82,22 +83,31 @@ final class AppBlockerService {
             pendingChallenge = challenge
             postReady(challenge)
         } else {
+            // Show the window right away — generating a problem takes seconds, and
+            // the app is already frozen, so silence here just looks like a hang.
             pendingChallenge = challenge
-            Task { @MainActor in
-                await generateProblem(for: challenge)
-            }
+            postReady(challenge)
+            Task { await generateProblem(for: challenge) }
         }
     }
 
     private func generateProblem(for challenge: GatekeeperChallenge) async {
-        let client = makeClient()
-        let generator = ProblemGenerator(client: client, store: store)
-        let problem = await generator.generate()
+        let generator = ProblemGenerator(client: makeClient(), store: store)
 
-        guard var current = pendingChallenge, current.id == challenge.id else { return }
-        current.phase = .problemPrompt(problem)
-        pendingChallenge = current
-        postReady(current)
+        do {
+            let problem = try await generator.generate()
+            guard var current = pendingChallenge, current.id == challenge.id else { return }
+            current.phase = .problemPrompt(problem)
+            pendingChallenge = current
+        } catch let error as AiError {
+            guard var current = pendingChallenge, current.id == challenge.id else { return }
+            current.phase = .denied(error.message)
+            pendingChallenge = current
+        } catch {
+            guard var current = pendingChallenge, current.id == challenge.id else { return }
+            current.phase = .denied("Could not generate a problem.")
+            pendingChallenge = current
+        }
     }
 
     // MARK: - Gatekeeper Actions
@@ -146,10 +156,12 @@ final class AppBlockerService {
     func resolveChallenge() {
         guard let challenge = pendingChallenge else { return }
         switch challenge.phase {
-        case .allowed, .denied:
-            break // already handled by judge/verify
+        case .allowed:
+            break // already resumed by allow()
         default:
-            kill(challenge.pid, SIGKILL) // user gave up or closed window
+            // Denied, or the user gave up / closed the window. Either way the app
+            // is still SIGSTOPped — leaving it that way strands a frozen process.
+            kill(challenge.pid, SIGKILL)
         }
         pendingChallenge = nil
     }

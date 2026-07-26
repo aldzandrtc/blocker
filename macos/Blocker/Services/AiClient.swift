@@ -26,9 +26,9 @@ enum AIProvider: String, CaseIterable, Codable {
 
     var defaultModel: String {
         switch self {
-        case .anthropic: "claude-sonnet-4-6"
+        case .anthropic: "claude-opus-5"
         case .openai:    "gpt-4o"
-        case .deepseek:  "deepseek-chat"
+        case .deepseek:  "deepseek-v4-flash"
         case .gemini:    "gemini-2.5-flash"
         }
     }
@@ -36,15 +36,20 @@ enum AIProvider: String, CaseIterable, Codable {
     var models: [String] {
         switch self {
         case .anthropic:
-            ["claude-opus-4-20250514", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"]
+            ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"]
         case .openai:
             ["gpt-4o", "gpt-4.1", "o4-mini", "o3-mini"]
         case .deepseek:
-            ["deepseek-chat", "deepseek-reasoner"]
+            ["deepseek-v4-flash", "deepseek-v4-pro"]
         case .gemini:
             ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"]
         }
     }
+}
+
+/// A failure that is worth showing the student, rather than silently denying.
+struct AiError: Error {
+    let message: String
 }
 
 struct AiClient {
@@ -62,25 +67,52 @@ struct AiClient {
 
     // MARK: - Chat
 
-    func chat(system: String, user: String) async -> String {
-        guard let url = buildURL() else { return "" }
+    func chat(system: String, user: String) async throws -> String {
+        guard !apiKey.isEmpty else {
+            throw AiError(message: "No API key set for \(provider.displayName). Add one in Settings.")
+        }
+        guard let url = buildURL() else {
+            throw AiError(message: "Invalid API endpoint: \(endpoint)")
+        }
 
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         setAuthHeaders(&req)
-        req.timeoutInterval = 30
+        req.timeoutInterval = 60
 
-        guard let body = buildBody(system: system, user: user) else { return "" }
+        guard let body = buildBody(system: system, user: user) else {
+            throw AiError(message: "Could not encode the request.")
+        }
         req.httpBody = body
 
+        let data: Data
+        let response: URLResponse
         do {
-            let (data, _) = try await URLSession.shared.data(for: req)
-            return extractText(from: data)
+            (data, response) = try await URLSession.shared.data(for: req)
         } catch {
-            print("AI request failed: \(error)")
-            return ""
+            throw AiError(message: "Could not reach \(provider.displayName): \(error.localizedDescription)")
         }
+
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            let detail = apiErrorMessage(from: data) ?? "HTTP \(http.statusCode)"
+            throw AiError(message: "\(provider.displayName) rejected the request: \(detail)")
+        }
+
+        let text = extractText(from: data)
+        guard !text.isEmpty else {
+            let detail = apiErrorMessage(from: data) ?? "empty response"
+            throw AiError(message: "\(provider.displayName) returned no usable answer (\(detail)).")
+        }
+        return text
+    }
+
+    /// Every provider nests its error text under `error.message`.
+    private func apiErrorMessage(from data: Data) -> String? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        if let err = json["error"] as? [String: Any], let msg = err["message"] as? String { return msg }
+        if let msg = json["message"] as? String { return msg }
+        return nil
     }
 
     // MARK: - URL Building
@@ -122,14 +154,19 @@ struct AiClient {
             return try? JSONSerialization.data(withJSONObject: body)
 
         case .openai, .deepseek:
-            let body: [String: Any] = [
+            var body: [String: Any] = [
                 "model": model,
-                "max_tokens": 1024,
                 "messages": [
                     ["role": "system", "content": system],
                     ["role": "user", "content": user]
                 ]
             ]
+            // OpenAI reasoning models (o1/o3/o4…) reject `max_tokens` outright.
+            if provider == .openai && isReasoningModel {
+                body["max_completion_tokens"] = 4096 // reasoning tokens count against this
+            } else {
+                body["max_tokens"] = 1024
+            }
             return try? JSONSerialization.data(withJSONObject: body)
 
         case .gemini:
@@ -138,10 +175,16 @@ struct AiClient {
                 "contents": [
                     ["role": "user", "parts": [["text": user]]]
                 ],
-                "generationConfig": ["maxOutputTokens": 1024]
+                // 2.5 models spend part of this budget on thinking, so leave headroom.
+                "generationConfig": ["maxOutputTokens": 4096]
             ]
             return try? JSONSerialization.data(withJSONObject: body)
         }
+    }
+
+    private var isReasoningModel: Bool {
+        let m = model.lowercased()
+        return m.hasPrefix("o1") || m.hasPrefix("o3") || m.hasPrefix("o4")
     }
 
     // MARK: - Response Parsing
@@ -159,47 +202,27 @@ struct AiClient {
 
     private func extractAnthropic(_ data: Data) -> String {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let content = json["content"] as? [[String: Any]],
-              let text = content.first?["text"] as? String else {
-            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let err = json["error"] as? [String: Any],
-               let msg = err["message"] as? String {
-                print("AI API error: \(msg)")
-            }
-            return ""
-        }
-        return text
+              let content = json["content"] as? [[String: Any]] else { return "" }
+        // Skip thinking blocks; concatenate the text ones.
+        return content
+            .filter { $0["type"] as? String == "text" || $0["text"] != nil }
+            .compactMap { $0["text"] as? String }
+            .joined()
     }
 
     private func extractOpenAI(_ data: Data) -> String {
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return ""
-        }
-        if let choices = json["choices"] as? [[String: Any]],
-           let message = choices.first?["message"] as? [String: Any],
-           let text = message["content"] as? String {
-            return text
-        }
-        if let err = json["error"] as? [String: Any],
-           let msg = err["message"] as? String {
-            print("AI API error: \(msg)")
-        }
-        return ""
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let choices = json["choices"] as? [[String: Any]],
+              let message = choices.first?["message"] as? [String: Any],
+              let text = message["content"] as? String else { return "" }
+        return text
     }
 
     private func extractGemini(_ data: Data) -> String {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let candidates = json["candidates"] as? [[String: Any]],
               let content = candidates.first?["content"] as? [String: Any],
-              let parts = content["parts"] as? [[String: Any]],
-              let text = parts.first?["text"] as? String else {
-            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let err = json["error"] as? [String: Any],
-               let msg = err["message"] as? String {
-                print("AI API error: \(msg)")
-            }
-            return ""
-        }
-        return text
+              let parts = content["parts"] as? [[String: Any]] else { return "" }
+        return parts.compactMap { $0["text"] as? String }.joined()
     }
 }

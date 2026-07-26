@@ -4,169 +4,183 @@ struct SettingsView: View {
     @Environment(SettingsStore.self) private var settings
 
     @State private var keyInput: String = ""
-    @State private var showKey = false
     @State private var endpointInput: String = ""
+    @State private var showKey = false
+    @State private var showAdvanced = false
 
     var body: some View {
         @Bindable var settings = settings
+
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("AI Configuration")
-                    .font(.title2)
-                    .padding(.horizontal)
-
-                // Provider selector
-                GroupBox {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Picker("Provider", selection: $settings.selectedProvider) {
-                            ForEach(AIProvider.allCases, id: \.self) { provider in
-                                HStack {
-                                    Circle()
-                                        .fill(settings.isProviderConfigured(provider) ? Color.green : Color.gray.opacity(0.3))
-                                        .frame(width: 8, height: 8)
-                                    Text(provider.displayName)
-                                }
-                                .tag(provider)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        .onChange(of: settings.selectedProvider) { _, _ in
-                            keyInput = settings.apiKey
-                            endpointInput = settings.apiEndpoint
-                            settings.save()
-                        }
-
-                        Text(providerDescription)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(8)
-                } label: {
-                    Label("Provider", systemImage: "cpu.fill")
-                }
-                .padding(.horizontal)
-
-                // API Key
-                GroupBox {
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack {
-                            Text("API Key")
-                                .frame(width: 80, alignment: .leading)
-                            if showKey {
-                                TextField(providerKeyPlaceholder, text: $keyInput)
-                                    .textFieldStyle(.roundedBorder)
-                            } else {
-                                SecureField(providerKeyPlaceholder, text: $keyInput)
-                                    .textFieldStyle(.roundedBorder)
-                            }
-                            Button {
-                                showKey.toggle()
-                            } label: {
-                                Image(systemName: showKey ? "eye.slash" : "eye")
-                            }
-                            .buttonStyle(.plain)
-                        }
-                        .onAppear { keyInput = settings.apiKey }
-                        .onChange(of: keyInput) { _, value in
-                            settings.apiKey = value.trimmingCharacters(in: .whitespaces)
-                            settings.save()
-                        }
-
-                        HStack {
-                            Text("Model")
-                                .frame(width: 80, alignment: .leading)
-                            Picker("", selection: $settings.model) {
-                                ForEach(settings.selectedProvider.models, id: \.self) { m in
-                                    Text(m).tag(m)
-                                }
-                            }
-                            .onChange(of: settings.model) { _, _ in settings.save() }
-                        }
-
-                        HStack {
-                            Text("Endpoint")
-                                .frame(width: 80, alignment: .leading)
-                            TextField(settings.selectedProvider.defaultEndpoint, text: $endpointInput)
-                                .textFieldStyle(.roundedBorder)
-                                .font(.caption)
-                                .onAppear { endpointInput = settings.apiEndpoint }
-                                .onChange(of: endpointInput) { _, value in
-                                    settings.apiEndpoint = value.trimmingCharacters(in: .whitespaces)
-                                    settings.save()
-                                }
-                        }
-                    }
-                    .padding(8)
-                } label: {
-                    Label("Credentials", systemImage: "key.fill")
-                }
-                .padding(.horizontal)
-
-                // Provider status
-                GroupBox {
-                    VStack(spacing: 6) {
-                        ForEach(AIProvider.allCases, id: \.self) { provider in
-                            HStack {
-                                Circle()
-                                    .fill(settings.isProviderConfigured(provider) ? Color.green : Color.gray.opacity(0.3))
-                                    .frame(width: 8, height: 8)
-                                Text(provider.displayName)
-                                    .font(.body)
-                                Spacer()
-                                if settings.isProviderConfigured(provider) {
-                                    Text(settings.effectiveModel(for: provider))
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                } else {
-                                    Text("not configured")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                        }
-                    }
-                    .padding(8)
-                } label: {
-                    Label("Status", systemImage: "checklist")
-                }
-                .padding(.horizontal)
-
-                // About
-                GroupBox {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Blocker supports Claude, ChatGPT, DeepSeek, and Gemini.")
-                            .font(.caption)
-                        Text("Get API keys from each provider's console, or use a proxy like OpenRouter for unified access.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(8)
-                } label: {
-                    Label("About", systemImage: "info.circle.fill")
-                }
-                .padding(.horizontal)
-
-                Spacer()
+            VStack(alignment: .leading, spacing: Metrics.block) {
+                provider(binding: $settings.selectedProvider)
+                credentials(model: $settings.model)
+                roster
             }
-            .padding(.vertical)
+            .padding(.horizontal, Metrics.gutter)
+            .padding(.vertical, 16)
+        }
+        .onAppear(perform: syncInputs)
+    }
+
+    private func syncInputs() {
+        keyInput = settings.apiKey
+        endpointInput = settings.apiEndpoint
+    }
+
+    // MARK: - Provider
+
+    private func provider(binding: Binding<AIProvider>) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            SectionRule(title: "Counsel")
+            Picker("", selection: binding) {
+                ForEach(AIProvider.allCases, id: \.self) { Text($0.displayName).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .onChange(of: settings.selectedProvider) { _, _ in
+                syncInputs()
+                settings.save()
+            }
+            Text(providerDescription)
+                .font(Face.body(11))
+                .foregroundStyle(Palette.faint)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
+    // MARK: - Credentials
+
+    private func credentials(model: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 13) {
+            SectionRule(title: "Credentials")
+
+            HStack(alignment: .bottom, spacing: 10) {
+                Text("KEY")
+                    .font(Face.clerk(9, .semibold))
+                    .tracking(1.2)
+                    .foregroundStyle(Palette.muted)
+                    .frame(width: 54, alignment: .leading)
+                Group {
+                    if showKey {
+                        TextField(providerKeyPlaceholder, text: $keyInput)
+                    } else {
+                        SecureField(providerKeyPlaceholder, text: $keyInput)
+                    }
+                }
+                .ruledField()
+                .onChange(of: keyInput) { _, value in
+                    let trimmed = value.trimmingCharacters(in: .whitespaces)
+                    guard trimmed != settings.apiKey else { return }
+                    settings.apiKey = trimmed
+                    settings.save()
+                }
+                Button(showKey ? "Hide" : "Show") { showKey.toggle() }
+                    .buttonStyle(PlainActionStyle())
+            }
+
+            HStack(spacing: 10) {
+                Text("MODEL")
+                    .font(Face.clerk(9, .semibold))
+                    .tracking(1.2)
+                    .foregroundStyle(Palette.muted)
+                    .frame(width: 54, alignment: .leading)
+                Picker("", selection: model) {
+                    ForEach(settings.selectedProvider.models, id: \.self) { Text($0).tag($0) }
+                    // Keeps a hand-edited or newly released model visible
+                    // instead of silently showing an empty picker.
+                    if !settings.selectedProvider.models.contains(settings.model) {
+                        Text(settings.model).tag(settings.model)
+                    }
+                }
+                .labelsHidden()
+                .onChange(of: settings.model) { _, _ in settings.save() }
+            }
+
+            DisclosureGroup(isExpanded: $showAdvanced) {
+                HStack(alignment: .bottom, spacing: 10) {
+                    Text("URL")
+                        .font(Face.clerk(9, .semibold))
+                        .tracking(1.2)
+                        .foregroundStyle(Palette.muted)
+                        .frame(width: 54, alignment: .leading)
+                    TextField(settings.selectedProvider.defaultEndpoint, text: $endpointInput)
+                        .ruledField()
+                        .font(Face.clerk(10))
+                        .onChange(of: endpointInput) { _, value in
+                            let trimmed = value.trimmingCharacters(in: .whitespaces)
+                            guard trimmed != settings.apiEndpoint else { return }
+                            settings.apiEndpoint = trimmed
+                            settings.save()
+                        }
+                }
+                .padding(.top, 8)
+            } label: {
+                Text("ENDPOINT")
+                    .font(Face.clerk(9, .semibold))
+                    .tracking(1.2)
+                    .foregroundStyle(Palette.muted)
+            }
+        }
+    }
+
+    // MARK: - Roster
+
+    private var roster: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            SectionRule(title: "On file")
+                .padding(.bottom, 6)
+
+            ForEach(Array(AIProvider.allCases.enumerated()), id: \.element) { index, provider in
+                let configured = settings.isProviderConfigured(provider)
+                let active = provider == settings.selectedProvider
+                HStack(spacing: 9) {
+                    Rectangle()
+                        .fill(configured ? Palette.verdigris : Palette.ruleFaint)
+                        .frame(width: 4, height: 4)
+                    Text(provider.displayName)
+                        .font(Face.body(12, active ? .semibold : .regular))
+                    if active {
+                        Text("RETAINED")
+                            .font(Face.clerk(8, .bold))
+                            .tracking(1.1)
+                            .foregroundStyle(Palette.brass)
+                    }
+                    Spacer(minLength: 8)
+                    Text(configured ? settings.effectiveModel(for: provider) : "no key")
+                        .font(Face.clerk(9))
+                        .foregroundStyle(Palette.faint)
+                        .lineLimit(1)
+                }
+                .padding(.vertical, 6)
+                if index < AIProvider.allCases.count - 1 { Rule(color: Palette.ruleFaint) }
+            }
+
+            Text("Keys are held in ~/.config/blocker/settings.json, readable only by you.")
+                .font(Face.body(10.5))
+                .foregroundStyle(Palette.faint)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 12)
+        }
+    }
+
+    // MARK: - Copy
+
     private var providerDescription: String {
         switch settings.selectedProvider {
-        case .anthropic: "Anthropic Claude — most capable for judging + problem generation"
-        case .openai:    "OpenAI ChatGPT — fast, good all-around performance"
-        case .deepseek:  "DeepSeek — affordable, strong reasoning"
-        case .gemini:    "Google Gemini — generous free tier available"
+        case .anthropic: "Anthropic Claude — the most capable judge and examiner."
+        case .openai:    "OpenAI — fast, solid all round."
+        case .deepseek:  "DeepSeek — inexpensive, strong reasoning."
+        case .gemini:    "Google Gemini — generous free tier."
         }
     }
 
     private var providerKeyPlaceholder: String {
         switch settings.selectedProvider {
-        case .anthropic: "sk-ant-api03-..."
-        case .openai:    "sk-proj-..."
-        case .deepseek:  "sk-..."
-        case .gemini:    "AIza..."
+        case .anthropic: "sk-ant-api03-…"
+        case .openai:    "sk-proj-…"
+        case .deepseek:  "sk-…"
+        case .gemini:    "AIza…"
         }
     }
 }

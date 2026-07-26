@@ -39,7 +39,21 @@ final class SettingsStore {
 
     init() { load() }
 
+    /// Model names that no longer resolve, mapped to their replacement.
+    /// DeepSeek retired `deepseek-chat`/`deepseek-reasoner` on 2026-07-24.
+    static let retiredModels: [String: String] = [
+        "deepseek-chat": "deepseek-v4-flash",
+        "deepseek-reasoner": "deepseek-v4-pro",
+        "claude-sonnet-4-6": "claude-sonnet-5",
+        "claude-opus-4-20250514": "claude-opus-5",
+        "claude-haiku-4-5-20251001": "claude-haiku-4-5",
+    ]
+
     // MARK: - Provider helpers
+
+    func makeClient() -> AiClient {
+        AiClient(apiKey: apiKey, endpoint: apiEndpoint, model: model, provider: selectedProvider)
+    }
 
     func isProviderConfigured(_ provider: AIProvider) -> Bool {
         !(providerKeys[provider] ?? "").isEmpty
@@ -61,13 +75,31 @@ final class SettingsStore {
         save()
     }
 
+    /// Users type "https://www.youtube.com/" as often as "youtube.com"; the
+    /// extension only ever matches against a bare hostname.
+    static func normalizeDomain(_ raw: String) -> String {
+        var d = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        for scheme in ["https://", "http://"] where d.hasPrefix(scheme) {
+            d = String(d.dropFirst(scheme.count))
+        }
+        if let slash = d.firstIndex(where: { $0 == "/" || $0 == "?" || $0 == "#" }) {
+            d = String(d[..<slash])
+        }
+        if let at = d.lastIndex(of: "@") { d = String(d[d.index(after: at)...]) }
+        if let colon = d.firstIndex(of: ":") { d = String(d[..<colon]) }
+        if d.hasPrefix("www.") { d = String(d.dropFirst(4)) }
+        return d
+    }
+
     func addWebsite(domain: String, label: String) {
+        let domain = Self.normalizeDomain(domain)
+        guard !domain.isEmpty else { return }
         guard !blockedTargets.contains(where: {
             if case .website(let d, _) = $0.kind { return d == domain }
             return false
         }) else { return }
         blockedTargets.append(BlockedTarget(
-            kind: .website(domain: domain, label: label)))
+            kind: .website(domain: domain, label: label.isEmpty ? domain : label)))
         save()
     }
 
@@ -96,8 +128,11 @@ final class SettingsStore {
     }
 
     func isOnBlocklist(domain: String) -> Bool {
-        blockedTargets.contains {
-            if case .website(let d, _) = $0.kind { return d == domain }
+        let needle = Self.normalizeDomain(domain)
+        return blockedTargets.contains {
+            if case .website(let d, _) = $0.kind {
+                return d == needle || needle.hasSuffix(".\(d)")
+            }
             return false
         }
     }
@@ -134,7 +169,10 @@ final class SettingsStore {
     private static func settingsURL() -> URL {
         let dir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".config/blocker")
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(
+            at: dir,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700])
         return dir.appendingPathComponent("settings.json")
     }
 
@@ -142,7 +180,11 @@ final class SettingsStore {
         let encoder = JSONEncoder()
         encoder.outputFormatting = .prettyPrinted
         guard let data = try? encoder.encode(SettingsData(from: self)) else { return }
-        try? data.write(to: Self.settingsURL())
+        let url = Self.settingsURL()
+        guard (try? data.write(to: url)) != nil else { return }
+        // This file holds API keys — keep it owner-only.
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600],
+                                               ofItemAtPath: url.path)
     }
 
     private func load() {
@@ -150,8 +192,9 @@ final class SettingsStore {
               let decoded = try? JSONDecoder().decode(SettingsData.self, from: data) else { return }
         let hadLegacyKey = decoded.apiKey != nil && !(decoded.apiKey?.isEmpty ?? true)
         let hadProviderKeys = !decoded.providerKeys.isEmpty
+        let hadRetiredModel = decoded.providerModels.values.contains { Self.retiredModels[$0] != nil }
         decoded.apply(to: self)
-        if hadLegacyKey && !hadProviderKeys {
+        if (hadLegacyKey && !hadProviderKeys) || hadRetiredModel {
             save() // persist migration to new format
         }
     }
@@ -221,7 +264,7 @@ private struct SettingsData: Codable {
         }
         for (key, value) in providerModels {
             guard let p = AIProvider(rawValue: key) else { continue }
-            store.providerModels[p] = value
+            store.providerModels[p] = SettingsStore.retiredModels[value] ?? value
         }
         for (key, value) in providerEndpoints {
             guard let p = AIProvider(rawValue: key) else { continue }

@@ -17,6 +17,7 @@ struct BlockerApp: App {
     }
 }
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let settings = SettingsStore()
     let blocker: AppBlockerService
@@ -91,7 +92,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .environment(blocker)
 
         popover = NSPopover()
-        popover.contentSize = NSSize(width: 440, height: 500)
+        popover.contentSize = NSSize(width: 440, height: 520)
         popover.behavior = .transient
         popover.contentViewController = NSHostingController(rootView: contentView)
         popover.delegate = self
@@ -113,23 +114,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NotificationCenter.default.addObserver(
             forName: .gatekeeperChallengeReady, object: nil, queue: .main
         ) { [weak self] _ in
-            self?.showGatekeeperWindow()
+            MainActor.assumeIsolated { self?.showGatekeeperWindow() }
         }
 
         NotificationCenter.default.addObserver(
             forName: .gatekeeperWindowShouldClose, object: nil, queue: .main
         ) { [weak self] _ in
-            self?.dismissGatekeeper()
+            MainActor.assumeIsolated { self?.dismissGatekeeper() }
         }
     }
 
     // MARK: - Gatekeeper Window
 
     private func showGatekeeperWindow() {
-        gatekeeperWindow?.close()
+        // Detach before closing: windowWillClose would otherwise resolve (and kill)
+        // the challenge we are about to show.
+        if let stale = gatekeeperWindow {
+            stale.delegate = nil
+            gatekeeperWindow = nil
+            stale.close()
+        }
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 500, height: 400),
+            contentRect: NSRect(x: 0, y: 0, width: 540, height: 460),
             styleMask: [.titled, .closable, .resizable],
             backing: .buffered,
             defer: false
@@ -151,8 +158,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func dismissGatekeeper() {
         blocker.resolveChallenge()
-        gatekeeperWindow?.close()
-        gatekeeperWindow = nil
+        if let window = gatekeeperWindow {
+            window.delegate = nil
+            gatekeeperWindow = nil
+            window.close()
+        }
     }
 }
 

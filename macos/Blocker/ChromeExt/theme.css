@@ -1,0 +1,227 @@
+/* Visual language: a court that sets you an exam.
+   Mirrors Blocker/Views/Theme.swift — keep the two in sync.
+
+   Type carries the design: a serif for anything with authority, a mono for the
+   clerical layer, system sans for reading text. Structure comes from rules and
+   alignment, not boxes. Colour is reserved for judgment. */
+
+:root {
+  color-scheme: light dark;
+
+  --paper: #f7f3ea;
+  --surface: #fffdf8;
+  --sunken: #efe9dc;
+  --ink: #1a1714;
+  --muted: #6b6259;
+  --faint: #9a9086;
+  --rule: rgba(26, 23, 20, 0.16);
+  --rule-faint: rgba(26, 23, 20, 0.08);
+
+  --seal: #a33227;      /* deny / strict */
+  --brass: #8a6420;     /* the judge / caution */
+  --verdigris: #2e6a4f; /* granted */
+
+  --serif: ui-serif, 'New York', 'Iowan Old Style', Georgia, serif;
+  --mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #141210;
+    --surface: #1c1a16;
+    --sunken: #100e0c;
+    --ink: #ede8df;
+    --muted: #9c9388;
+    --faint: #6a635b;
+    --rule: rgba(237, 232, 223, 0.16);
+    --rule-faint: rgba(237, 232, 223, 0.08);
+
+    --seal: #cb4e3f;
+    --brass: #c49a48;
+    --verdigris: #5ca57f;
+  }
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: var(--sans);
+  background: var(--paper);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* --- Clerical layer --- */
+
+.clerk {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.docket {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Caption with a rule running out to the right margin. */
+.section-rule {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 10px;
+}
+.section-rule::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--rule-faint);
+}
+
+.masthead {
+  font-family: var(--serif);
+  font-weight: 700;
+  letter-spacing: 0.22em;
+}
+
+h1, h2 { font-family: var(--serif); font-weight: 600; letter-spacing: -0.01em; }
+
+/* --- Rules --- */
+
+.rule { height: 1px; background: var(--rule); }
+.rule-heavy { height: 2px; background: var(--ink); }
+.rule-faint { height: 1px; background: var(--rule-faint); }
+
+/* --- Tags: outlined, square. Filled pills read as chat UI. --- */
+
+.tag {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border: 1px solid currentColor;
+  white-space: nowrap;
+}
+.tag.seal { color: var(--seal); }
+.tag.quiet { color: var(--muted); }
+
+/* --- Buttons --- */
+
+.btn {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  padding: 9px 16px;
+  border: 1px solid transparent;
+  border-radius: 0;
+  cursor: pointer;
+  transition: opacity 0.12s, background 0.12s;
+}
+.btn-seal { background: var(--seal); color: var(--paper); }
+.btn-seal:hover:not(:disabled) { opacity: 0.86; }
+.btn-ink { background: var(--ink); color: var(--paper); }
+.btn-ink:hover:not(:disabled) { opacity: 0.86; }
+/* Disabled reads as a faint outline rather than a heavy grey slab. */
+.btn-seal:disabled, .btn-ink:disabled {
+  background: none;
+  color: var(--faint);
+  border-color: var(--rule-faint);
+  cursor: not-allowed;
+}
+.btn-outline { background: none; color: var(--ink); border-color: var(--rule); }
+.btn-outline:hover { background: var(--rule-faint); }
+.btn-plain {
+  background: none;
+  border: none;
+  color: var(--muted);
+  padding: 9px 0;
+}
+.btn-plain:hover { color: var(--ink); }
+
+/* --- Inputs: ruled underline, not a rounded box --- */
+
+textarea, input[type='text'] {
+  width: 100%;
+  font-family: var(--sans);
+  font-size: 13px;
+  line-height: 1.6;
+  padding: 8px 2px;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--rule);
+  border-radius: 0;
+  color: var(--ink);
+  resize: none;
+}
+textarea::placeholder, input::placeholder { color: var(--faint); }
+textarea:focus, input:focus { outline: none; border-bottom-color: var(--ink); }
+
+/* --- The verdict mark --- */
+
+.stamp {
+  display: inline-block;
+  font-family: var(--serif);
+  font-size: 27px;
+  font-weight: 700;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  text-indent: 0.28em; /* balance the trailing letterspace */
+  padding: 11px 22px;
+  border: 3px solid currentColor;
+  outline: 1px solid currentColor;
+  outline-offset: 3px;
+  transform: rotate(-2.5deg);
+}
+.stamp.granted { color: var(--verdigris); }
+.stamp.denied { color: var(--seal); }
+
+/* --- Utility --- */
+
+.hidden { display: none !important; }
+
+.wait {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+/* Deliberation indicator: a rule that sweeps, not a spinner. */
+.wait-rule {
+  height: 2px;
+  width: 120px;
+  margin: 14px auto 0;
+  background: var(--rule-faint);
+  overflow: hidden;
+}
+.wait-rule::after {
+  content: '';
+  display: block;
+  height: 100%;
+  width: 40%;
+  background: var(--ink);
+  animation: sweep 1.3s ease-in-out infinite;
+}
+@keyframes sweep {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(250%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wait-rule::after { animation: none; width: 100%; }
+}

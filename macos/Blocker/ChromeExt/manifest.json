@@ -3,7 +3,7 @@
   "name": "Blocker",
   "version": "1.0",
   "description": "AI-powered anti-procrastination — block websites until you solve an academic problem or convince the judge.",
-  "permissions": ["webNavigation", "storage", "tabs"],
+  "permissions": ["webNavigation", "storage", "tabs", "alarms"],
   "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background.js"

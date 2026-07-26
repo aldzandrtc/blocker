@@ -5,148 +5,206 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Blocker — Gatekeeper</title>
 <link rel="stylesheet" href="katex/katex.min.css">
+<link rel="stylesheet" href="theme.css">
 <script src="katex/katex.min.js"></script>
 <script src="katex/auto-render.min.js"></script>
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: #0d0d0d;
-    color: #e0e0e0;
+    min-height: 100vh;
     display: flex;
     justify-content: center;
-    align-items: center;
+    padding: 0 24px 48px;
+  }
+  .sheet {
+    width: 100%;
+    max-width: 620px;
+    display: flex;
+    flex-direction: column;
     min-height: 100vh;
   }
-  .container {
-    max-width: 520px;
-    width: 100%;
-    padding: 40px 32px;
-    text-align: center;
+
+  /* Docket header, ruled off from the body like a case file. */
+  .docket-bar {
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+    padding: 26px 0 12px;
   }
-  .icon { font-size: 48px; margin-bottom: 16px; }
-  h1 { font-size: 24px; margin-bottom: 8px; color: #fff; }
-  .subtitle { color: #888; margin-bottom: 24px; font-size: 14px; }
-  .domain { color: #f87171; font-weight: 600; }
-  textarea, input[type="text"] {
-    width: 100%;
-    padding: 12px;
-    background: #1a1a1a;
-    border: 1px solid #333;
-    border-radius: 8px;
-    color: #e0e0e0;
+  .docket-bar .masthead { font-size: 13px; }
+  .docket-bar .docket { margin-left: auto; }
+
+  .panel { padding-top: 34px; }
+  /* Only the judge panel stretches — its textarea is the writing surface.
+     The exam panel sits under its content instead of pushing the footer down. */
+  #judge-section:not(.hidden), #result-section:not(.hidden), #offline:not(.hidden) {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .headline { display: flex; align-items: flex-start; gap: 20px; }
+  .headline h1 { font-size: 34px; line-height: 1.1; }
+  .headline .lede {
     font-size: 14px;
-    resize: vertical;
+    color: var(--muted);
+    line-height: 1.55;
+    margin-top: 9px;
+    max-width: 46ch;
   }
-  textarea:focus, input:focus { outline: none; border-color: #6366f1; }
-  textarea { min-height: 100px; }
-  .btn {
-    display: inline-block;
-    padding: 10px 24px;
-    border: none;
-    border-radius: 8px;
-    font-size: 14px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: background 0.2s;
+  .headline strong { color: var(--ink); font-weight: 600; }
+
+  /* Countdown: figure over a depleting rule. */
+  .clock { margin-left: auto; text-align: right; flex: none; }
+  .clock .figure {
+    font-family: var(--mono);
+    font-size: 17px;
+    letter-spacing: 0.06em;
+    color: var(--muted);
   }
-  .btn-primary { background: #6366f1; color: #fff; }
-  .btn-primary:hover { background: #5558e6; }
-  .btn-primary:disabled { background: #444; color: #888; cursor: not-allowed; }
-  .btn-secondary { background: #333; color: #e0e0e0; margin-right: 12px; }
-  .btn-secondary:hover { background: #444; }
-  .btn-row { margin-top: 20px; }
-  .result { padding: 16px; border-radius: 8px; margin-top: 16px; }
-  .result.success { background: rgba(34,197,94,0.15); border: 1px solid rgba(34,197,94,0.3); }
-  .result.fail { background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.3); }
-  .spinner {
-    display: inline-block;
-    width: 24px; height: 24px;
-    border: 3px solid #333;
-    border-top-color: #6366f1;
-    border-radius: 50%;
-    animation: spin 0.6s linear infinite;
+  .clock .bar { width: 62px; height: 2px; background: var(--rule-faint); margin-top: 5px; }
+  .clock .bar span {
+    display: block; height: 100%; width: 100%;
+    background: var(--muted);
+    transform-origin: left;
+    transition: transform 0.35s linear, background 0.3s;
   }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  .hidden { display: none !important; }
-  .problem-text {
-    background: #1a1a1a;
-    padding: 20px;
-    border-radius: 8px;
-    margin: 16px 0;
-    text-align: left;
-    font-size: 15px;
+  .clock.low .figure, .clock.low .bar span { color: var(--brass); background-color: var(--brass); }
+  .clock.critical .figure { color: var(--seal); }
+  .clock.critical .bar span { background: var(--seal); }
+
+  .field { margin-top: 28px; flex: 1; display: flex; flex-direction: column; }
+  .field textarea { flex: 1; min-height: 130px; font-size: 14px; }
+
+  .note { font-size: 12px; color: var(--faint); margin-top: 10px; line-height: 1.5; }
+
+  .actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 22px 0 0;
+    margin-top: 20px;
+    border-top: 1px solid var(--rule);
+  }
+
+  .question {
+    margin-top: 12px;
+    font-size: 16px;
+    line-height: 1.75;
+    max-height: 280px;
+    overflow-y: auto;
+    padding: 4px 0 16px;
+  }
+  .katex { color: var(--ink); }
+  .question .katex-display { margin: 14px 0; }
+
+  .answer-row { display: flex; align-items: flex-end; gap: 16px; margin-top: 6px; }
+  .answer-row .grow { flex: 1; }
+  .answer-row input { font-size: 15px; font-family: var(--mono); }
+
+  .verdict { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+  .verdict .reason {
+    font-family: var(--serif);
+    font-size: 16px;
+    color: var(--muted);
     line-height: 1.6;
+    margin-top: 30px;
+    max-width: 44ch;
   }
-  .badge {
-    display: inline-block;
-    padding: 4px 12px;
-    border-radius: 16px;
-    font-size: 12px;
-    font-weight: 600;
-  }
-  .badge-strict { background: rgba(239,68,68,0.2); color: #f87171; }
-  .badge-regular { background: rgba(99,102,241,0.2); color: #818cf8; }
-  .katex { color: #e0e0e0; }
-  .problem-text .katex-display { margin: 8px 0; }
+  .verdict .after { margin-top: 34px; }
+
+  .center { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; }
 </style>
 </head>
 <body>
-<div class="container">
+<div class="sheet">
+
+  <div class="docket-bar">
+    <span class="masthead">THE GATEKEEPER</span>
+    <span class="docket" id="docket"></span>
+  </div>
+  <div class="rule-heavy"></div>
+
   <!-- Loading -->
-  <div id="loading">
-    <div class="spinner"></div>
-    <p style="margin-top:16px;color:#888;">Preparing gatekeeper...</p>
+  <div id="loading" class="center">
+    <div class="wait" id="loading-text">Preparing the challenge</div>
+    <div class="wait-rule"></div>
   </div>
 
   <!-- Offline (macOS app not running) -->
-  <div id="offline" class="hidden">
-    <div class="icon">🔌</div>
-    <h1>Blocker Unavailable</h1>
-    <p class="subtitle">The Blocker macOS app is not running. Start it to unblock this site.</p>
-  </div>
-
-  <!-- Judge prompt -->
-  <div id="judge-section" class="hidden">
-    <div class="icon">⚖️</div>
-    <h1>Convince the Judge</h1>
-    <p class="subtitle">
-      You tried to visit <span class="domain" id="judge-domain"></span>.
-      <br>The default answer is <strong>DENY</strong>. Make your case:
-    </p>
-    <p style="margin-top:8px;font-size:13px;color:#888;" id="judge-timer" class="hidden"></p>
-    <textarea id="argument" placeholder="Explain why you need access..."></textarea>
-    <div class="btn-row">
-      <button class="btn btn-primary" id="judge-submit" disabled>Submit Argument</button>
-    </div>
-    <div id="judge-result" class="hidden"></div>
-  </div>
-
-  <!-- Problem prompt -->
-  <div id="problem-section" class="hidden">
-    <div class="icon">🧮</div>
-    <h1>Academic Problem</h1>
-    <p class="subtitle">
-      Solve this problem to access <span class="domain" id="problem-domain"></span>:
-    </p>
-    <div class="problem-text" id="problem-text"></div>
-    <p style="color:#888;font-size:12px;margin-top:4px;" id="topic-label"></p>
-    <input type="text" id="answer" placeholder="Your answer" autocomplete="off">
-    <div class="btn-row">
-      <button class="btn btn-primary" id="problem-submit" disabled>Submit Answer</button>
-    </div>
-    <div id="problem-result" class="hidden"></div>
-  </div>
-
-  <!-- Result shared -->
-  <div id="result-section" class="hidden">
-    <div class="icon" id="result-icon"></div>
-    <h1 id="result-title"></h1>
-    <div class="result" id="result-box"></div>
-    <div class="btn-row">
-      <button class="btn btn-primary" id="result-close">Close</button>
+  <div id="offline" class="panel hidden">
+    <div class="headline">
+      <div>
+        <h1>The court is not sitting.</h1>
+        <p class="lede">The Blocker application is not answering on this machine. Start it, then reload this page.</p>
+      </div>
     </div>
   </div>
+
+  <!-- Judge -->
+  <div id="judge-section" class="panel hidden">
+    <div class="headline">
+      <div>
+        <h1>Convince the Judge</h1>
+        <p class="lede">You moved to open <strong id="judge-domain"></strong>. The default answer is deny.</p>
+      </div>
+      <div class="clock hidden" id="clock">
+        <div class="figure" id="clock-figure">02:00</div>
+        <div class="bar"><span id="clock-bar"></span></div>
+      </div>
+    </div>
+
+    <div class="field">
+      <div class="section-rule"><span class="clerk">Statement of the accused</span></div>
+      <textarea id="argument" placeholder="Be specific. Name the deadline."></textarea>
+      <p class="note">Boredom, “just five minutes”, and anything that can wait are denied on sight.</p>
+    </div>
+
+    <div class="actions">
+      <button class="btn btn-plain" id="judge-give-up">Withdraw</button>
+      <button class="btn btn-seal" id="judge-submit" disabled>Submit argument</button>
+    </div>
+  </div>
+
+  <!-- Examination -->
+  <div id="problem-section" class="panel hidden">
+    <div class="headline">
+      <div>
+        <h1>Examination</h1>
+        <p class="lede">One question stands between you and <strong id="problem-domain"></strong>.</p>
+      </div>
+    </div>
+
+    <div class="field">
+      <div class="section-rule"><span class="clerk">Question</span><span class="docket" id="topic-label"></span></div>
+      <div class="question" id="problem-text"></div>
+      <div class="rule"></div>
+
+      <div class="answer-row">
+        <div class="grow">
+          <div class="clerk" style="margin-bottom:2px;">Answer</div>
+          <input type="text" id="answer" autocomplete="off" spellcheck="false">
+        </div>
+        <button class="btn btn-ink" id="problem-submit" disabled>Submit</button>
+      </div>
+      <p class="note hidden" id="problem-error"></p>
+    </div>
+
+    <div class="actions">
+      <button class="btn btn-plain" id="problem-give-up">Withdraw</button>
+    </div>
+  </div>
+
+  <!-- Verdict -->
+  <div id="result-section" class="panel hidden">
+    <div class="verdict">
+      <div class="stamp denied" id="result-stamp">Denied</div>
+      <p class="reason" id="result-message"></p>
+      <div class="after">
+        <button class="btn btn-outline" id="result-close">Close</button>
+      </div>
+    </div>
+  </div>
+
 </div>
 <script src="gatekeeper.js"></script>
 </body>

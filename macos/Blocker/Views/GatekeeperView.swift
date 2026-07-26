@@ -7,313 +7,258 @@ struct GatekeeperView: View {
     @State private var answer: String = ""
     @State private var isBusy = false
     @State private var timeRemaining = 120
-    @State private var problemHeight: CGFloat = 100
+    @State private var problemHeight: CGFloat = 90
+    @FocusState private var answerFocused: Bool
 
     private let judgeTimeLimit = 120
+    private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        if let challenge = blocker.pendingChallenge {
-            VStack(spacing: 16) {
-                Text("Gatekeeper")
-                    .font(.headline)
-                    .foregroundStyle(.secondary)
+        VStack(spacing: 0) {
+            if let challenge = blocker.pendingChallenge {
+                docket(challenge)
+                Rule(color: Palette.ink, weight: 2)
 
-                switch challenge.phase {
-                case .starting:
-                    Spacer()
-                    ProgressView("Preparing challenge...")
-                    Spacer()
-
-                case .judgePrompt:
-                    judgeView(challenge: challenge)
-
-                case .judging:
-                    Spacer()
-                    ProgressView("Judging your argument...")
-                    Text("The AI is evaluating your case...")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-
-                case .problemPrompt(let problem):
-                    problemView(problem: problem)
-
-                case .verifying:
-                    Spacer()
-                    ProgressView("Verifying your answer...")
-                    Text("Checking against the expected answer...")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-
-                case .allowed(let reason):
-                    resultView(success: true, message: reason)
-
-                case .denied(let reason):
-                    resultView(success: false, message: reason)
+                Group {
+                    switch challenge.phase {
+                    case .starting:
+                        recess("Preparing the challenge")
+                    case .judgePrompt:
+                        judgeView(challenge)
+                    case .judging:
+                        recess("The judge is deliberating")
+                    case .problemPrompt(let problem):
+                        problemView(problem)
+                    case .verifying:
+                        recess("Marking your answer")
+                    case .allowed(let reason):
+                        verdictView(granted: true, reason: reason)
+                    case .denied(let reason):
+                        verdictView(granted: false, reason: reason)
+                    }
                 }
-            }
-            .padding()
-            .frame(width: 480, height: 360)
-            .onReceive(
-                Timer.publish(every: 1, on: .main, in: .common).autoconnect()
-            ) { _ in
-                tick()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(.horizontal, 26)
             }
         }
+        .frame(width: 540, height: 460)
+        .background(Palette.paper)
+        .foregroundStyle(Palette.ink)
+        .onReceive(timer) { _ in tick() }
     }
 
-    private func tick() {
-        guard let challenge = blocker.pendingChallenge else { return }
-        switch challenge.phase {
-        case .judgePrompt:
-            if timeRemaining > 0 {
-                timeRemaining -= 1
-            } else {
-                blocker.resolveChallenge()
-                closeWindow()
-            }
-        default:
-            break
+    private var isStrict: Bool { blocker.pendingChallenge?.category == .strict }
+
+    // MARK: - Docket
+
+    private func docket(_ challenge: GatekeeperChallenge) -> some View {
+        HStack {
+            Text("THE GATEKEEPER")
+                .font(Face.display(12, .bold))
+                .tracking(3)
+            Spacer()
+            DocketLine(parts: [
+                "case \(caseNumber(from: challenge.id))",
+                challenge.appName,
+                isStrict ? "strict" : "regular",
+            ])
         }
+        .padding(.horizontal, 26)
+        .padding(.top, 16)
+        .padding(.bottom, 11)
     }
 
-    private var timerColor: Color {
-        timeRemaining <= 30 ? .red : .secondary
+    // MARK: - Recess (busy)
+
+    private func recess(_ title: String) -> some View {
+        VStack(spacing: 10) {
+            Spacer()
+            Text(title.uppercased())
+                .font(Face.clerk(10, .semibold))
+                .tracking(2)
+                .foregroundStyle(Palette.muted)
+            ProgressView().controlSize(.small)
+            Spacer()
+        }
     }
 
     // MARK: - Judge
 
-    private func judgeView(challenge: GatekeeperChallenge) -> some View {
-        VStack(spacing: 16) {
-            Image(systemName: "figure.mind.and.body")
-                .font(.system(size: 40))
-                .foregroundStyle(.orange)
+    private func judgeView(_ challenge: GatekeeperChallenge) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Spacer().frame(height: 22)
 
-            Text("Convince the Judge")
-                .font(.title2)
-
-            Text("You tried to open **\(challenge.appName)**.\nThe default answer is DENY. Make your case:")
-                .multilineTextAlignment(.center)
-                .font(.body)
-
-            Text(timeText)
-                .font(.caption)
-                .foregroundStyle(timerColor)
-
-            TextEditor(text: $argument)
-                .frame(height: 100)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(.secondary.opacity(0.3), lineWidth: 1)
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 7) {
+                    Text("Convince the Judge")
+                        .font(Face.display(29, .semibold))
+                    Text("You moved to open **\(challenge.appName)**. The default answer is deny.")
+                        .font(Face.body(13))
+                        .foregroundStyle(Palette.muted)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .disabled(isBusy)
+                Spacer(minLength: 16)
+                Countdown(remaining: timeRemaining, total: judgeTimeLimit)
+            }
 
-            HStack(spacing: 16) {
-                Button("Give Up") {
-                    blocker.resolveChallenge()
-                    closeWindow()
+            Spacer().frame(height: 20)
+
+            SectionRule(title: "Statement of the accused")
+            ZStack(alignment: .topLeading) {
+                TextEditor(text: $argument)
+                    .font(Face.body(12.5))
+                    .scrollContentBackground(.hidden)
+                    .padding(.top, 8)
+                    .disabled(isBusy)
+
+                if argument.isEmpty {
+                    Text("Be specific. Name the deadline.")
+                        .font(Face.body(12.5))
+                        .foregroundStyle(Palette.faint)
+                        .padding(.top, 13)
+                        .padding(.leading, 5)
+                        .allowsHitTesting(false)
                 }
+            }
+            .frame(maxHeight: .infinity)
+            Rule()
 
-                Button {
+            Text("Boredom, “just five minutes”, and anything that can wait are denied on sight.")
+                .font(Face.body(11))
+                .foregroundStyle(Palette.faint)
+                .padding(.top, 8)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack {
+                Button("Withdraw") { giveUp() }
+                    .buttonStyle(PlainActionStyle())
+                Spacer()
+                Button("Submit argument") {
                     isBusy = true
                     Task {
                         await blocker.judge(argument: argument)
                         isBusy = false
                     }
-                } label: {
-                    Text("Submit Argument")
                 }
+                .buttonStyle(SealButtonStyle(tint: Palette.seal))
                 .disabled(argument.trimmingCharacters(in: .whitespaces).isEmpty || isBusy)
                 .keyboardShortcut(.return)
             }
+            .padding(.vertical, 16)
         }
-    }
-
-    private var timeText: String {
-        let m = timeRemaining / 60
-        let s = timeRemaining % 60
-        if timeRemaining <= 0 {
-            return "Time's up — access denied"
-        }
-        return "Time remaining: \(m):\(String(format: "%02d", s))"
     }
 
     // MARK: - Problem
 
-    private func problemView(problem: GeneratedProblem) -> some View {
-        VStack(spacing: 16) {
-            Image(systemName: "function")
-                .font(.system(size: 40))
-                .foregroundStyle(.blue)
+    private func problemView(_ problem: GeneratedProblem) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Spacer().frame(height: 20)
 
-            Text("Academic Problem")
-                .font(.title2)
+            Text("Examination")
+                .font(Face.display(29, .semibold))
+            Text(problem.topic)
+                .font(Face.clerk(10))
+                .tracking(1)
+                .foregroundStyle(Palette.muted)
+                .padding(.top, 5)
+                .lineLimit(1)
 
-            LaTeXWebView(text: problem.problem, dynamicHeight: $problemHeight)
-                .frame(height: max(problemHeight, 60))
+            Spacer().frame(height: 16)
 
-            TextField("Your answer", text: $answer)
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 200)
-                .disabled(isBusy)
-
-            Text("Topic: \(problem.topic)")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            HStack(spacing: 16) {
-                Button("Give Up") {
-                    blocker.resolveChallenge()
-                    closeWindow()
-                }
-
-                Button {
-                    isBusy = true
-                    Task {
-                        await blocker.verifyAnswer(answer)
-                        isBusy = false
-                    }
-                } label: {
-                    Text("Submit Answer")
-                }
-                .disabled(answer.trimmingCharacters(in: .whitespaces).isEmpty || isBusy)
-                .keyboardShortcut(.return)
+            SectionRule(title: "Question")
+            ScrollView {
+                LaTeXWebView(text: problem.problem, dynamicHeight: $problemHeight)
+                    .frame(height: max(problemHeight, 60))
             }
+            .frame(maxHeight: .infinity)
+            Rule()
+
+            HStack(alignment: .bottom, spacing: 16) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("ANSWER")
+                        .font(Face.clerk(9, .semibold))
+                        .tracking(1.3)
+                        .foregroundStyle(Palette.muted)
+                    TextField("", text: $answer)
+                        .ruledField(focused: answerFocused)
+                        .focused($answerFocused)
+                        .disabled(isBusy)
+                        .onSubmit(submitAnswer)
+                }
+                Button("Submit") { submitAnswer() }
+                    .buttonStyle(SealButtonStyle())
+                    .disabled(answer.trimmingCharacters(in: .whitespaces).isEmpty || isBusy)
+                    .keyboardShortcut(.return)
+            }
+            .padding(.top, 14)
+
+            HStack {
+                Button("Withdraw") { giveUp() }
+                    .buttonStyle(PlainActionStyle())
+                Spacer()
+            }
+            .padding(.vertical, 14)
         }
     }
 
-    // MARK: - Result
+    private func submitAnswer() {
+        guard !answer.trimmingCharacters(in: .whitespaces).isEmpty, !isBusy else { return }
+        isBusy = true
+        Task {
+            await blocker.verifyAnswer(answer)
+            isBusy = false
+        }
+    }
 
-    private func resultView(success: Bool, message: String) -> some View {
-        VStack(spacing: 16) {
-            Image(systemName: success ? "checkmark.circle.fill" : "xmark.circle.fill")
-                .font(.system(size: 48))
-                .foregroundStyle(success ? .green : .red)
+    // MARK: - Verdict
 
-            Text(success ? "Access Granted" : "Access Denied")
-                .font(.title2)
+    private func verdictView(granted: Bool, reason: String) -> some View {
+        let tint = granted ? Palette.verdigris : Palette.seal
 
-            Text(message)
-                .font(.body)
+        return VStack(spacing: 0) {
+            Spacer()
+
+            Stamp(text: granted ? "Granted" : "Denied", tint: tint)
+
+            Text(reason)
+                .font(Face.display(15))
+                .foregroundStyle(Palette.muted)
                 .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 30)
+                .padding(.top, 26)
 
-            Button("Close") {
+            Spacer()
+
+            Button(granted ? "Proceed" : "Close") {
                 blocker.resolveChallenge()
                 closeWindow()
             }
+            .buttonStyle(OutlineButtonStyle(tint: Palette.ink))
             .keyboardShortcut(.return)
+            .padding(.bottom, 26)
         }
+    }
+
+    // MARK: - Logic
+
+    private func tick() {
+        guard let challenge = blocker.pendingChallenge else { return }
+        guard case .judgePrompt = challenge.phase, !isBusy else { return }
+        if timeRemaining > 0 {
+            timeRemaining -= 1
+        } else {
+            blocker.resolveChallenge()
+            closeWindow()
+        }
+    }
+
+    private func giveUp() {
+        blocker.resolveChallenge()
+        closeWindow()
     }
 
     private func closeWindow() {
         NotificationCenter.default.post(name: .gatekeeperWindowShouldClose, object: nil)
-    }
-}
-
-// MARK: - Judge sheet for blocklist removal
-
-struct RemoveGatekeeperSheet: View {
-    let target: BlockedTarget
-    let settings: SettingsStore
-    @Binding var isPresented: Bool
-
-    @State private var argument: String = ""
-    @State private var isBusy = false
-    @State private var result: (allowed: Bool, reason: String)?
-    @State private var timeRemaining = 120
-
-    var body: some View {
-        VStack(spacing: 16) {
-            if let result = result {
-                VStack(spacing: 12) {
-                    Image(systemName: result.allowed ? "checkmark.circle.fill" : "xmark.circle.fill")
-                        .font(.system(size: 40))
-                        .foregroundStyle(result.allowed ? .green : .red)
-                    Text(result.allowed ? "Removed" : "Denied")
-                        .font(.title2)
-                    Text(result.reason)
-                        .font(.body)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                    Button(result.allowed ? "Done" : "Close") {
-                        isPresented = false
-                    }
-                    .keyboardShortcut(.return)
-                }
-            } else {
-                Image(systemName: "figure.mind.and.body")
-                    .font(.system(size: 36))
-                    .foregroundStyle(.orange)
-
-                Text("Convince the Judge")
-                    .font(.title2)
-
-                Text("You want to remove **\(target.displayName)** from the blocklist. Explain why:")
-                    .font(.body)
-                    .multilineTextAlignment(.center)
-
-                Text(timeRemainingText)
-                    .font(.caption)
-                    .foregroundStyle(timeRemaining <= 30 ? .red : .secondary)
-
-                TextEditor(text: $argument)
-                    .frame(height: 80)
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(.secondary.opacity(0.3), lineWidth: 1)
-                    }
-                    .disabled(isBusy)
-
-                HStack(spacing: 16) {
-                    Button("Cancel") { isPresented = false }
-                    Button("Submit") {
-                        submit()
-                    }
-                    .disabled(argument.trimmingCharacters(in: .whitespaces).isEmpty || isBusy)
-                    .keyboardShortcut(.return)
-                }
-            }
-        }
-        .padding()
-        .frame(width: 440, height: 320)
-        .onReceive(
-            Timer.publish(every: 1, on: .main, in: .common).autoconnect()
-        ) { _ in
-            if result == nil, timeRemaining > 0 {
-                timeRemaining -= 1
-            } else if result == nil, timeRemaining <= 0 {
-                result = (false, "Time expired — removal denied automatically.")
-            }
-        }
-    }
-
-    private var timeRemainingText: String {
-        if timeRemaining <= 0 { return "Time's up" }
-        return "Time remaining: \(timeRemaining / 60):\(String(format: "%02d", timeRemaining % 60))"
-    }
-
-    private func submit() {
-        isBusy = true
-        let client = AiClient(
-            apiKey: settings.apiKey,
-            endpoint: settings.apiEndpoint,
-            model: settings.model,
-            provider: settings.selectedProvider
-        )
-        let judge = BlocklistJudge(client: client)
-        Task {
-            let judgment = await judge.judge(
-                appName: target.displayName,
-                argument: "I want to remove \(target.displayName) from my blocklist because: \(argument)"
-            )
-            result = (judgment.allowed, judgment.reason)
-            if judgment.allowed {
-                settings.removeTarget(target.id)
-            }
-            isBusy = false
-        }
     }
 }
