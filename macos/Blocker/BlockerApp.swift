@@ -92,7 +92,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .environment(blocker)
 
         popover = NSPopover()
-        popover.contentSize = NSSize(width: 440, height: 520)
+        popover.contentSize = NSSize(width: 440, height: 560)
         popover.behavior = .transient
         popover.contentViewController = NSHostingController(rootView: contentView)
         popover.delegate = self
@@ -136,13 +136,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 540, height: 460),
-            styleMask: [.titled, .closable, .resizable],
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 500),
+            styleMask: [.titled, .closable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
         window.center()
-        window.title = "Blocker — Gatekeeper"
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.isMovableByWindowBackground = true
+        window.title = "Blocker"
         window.isReleasedWhenClosed = false
         window.contentView = NSHostingView(
             rootView: GatekeeperView()

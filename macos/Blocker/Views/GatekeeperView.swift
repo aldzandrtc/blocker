@@ -9,6 +9,7 @@ struct GatekeeperView: View {
     @State private var timeRemaining = 120
     @State private var problemHeight: CGFloat = 90
     @FocusState private var answerFocused: Bool
+    @FocusState private var argumentFocused: Bool
 
     private let judgeTimeLimit = 120
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -16,21 +17,20 @@ struct GatekeeperView: View {
     var body: some View {
         VStack(spacing: 0) {
             if let challenge = blocker.pendingChallenge {
-                docket(challenge)
-                Rule(color: Palette.ink, weight: 2)
+                titleBar(challenge)
 
                 Group {
                     switch challenge.phase {
                     case .starting:
-                        recess("Preparing the challenge")
+                        waiting("Getting things ready")
                     case .judgePrompt:
                         judgeView(challenge)
                     case .judging:
-                        recess("The judge is deliberating")
+                        waiting("The judge is considering it")
                     case .problemPrompt(let problem):
                         problemView(problem)
                     case .verifying:
-                        recess("Marking your answer")
+                        waiting("Checking your answer")
                     case .allowed(let reason):
                         verdictView(granted: true, reason: reason)
                     case .denied(let reason):
@@ -38,46 +38,53 @@ struct GatekeeperView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(.horizontal, 26)
+                .padding(.horizontal, 24)
             }
         }
-        .frame(width: 540, height: 460)
-        .background(Palette.paper)
-        .foregroundStyle(Palette.ink)
+        .frame(width: 560, height: 500)
+        .background(Palette.canvas)
+        .foregroundStyle(Palette.text)
         .onReceive(timer) { _ in tick() }
     }
 
     private var isStrict: Bool { blocker.pendingChallenge?.category == .strict }
 
-    // MARK: - Docket
+    // MARK: - Title bar
 
-    private func docket(_ challenge: GatekeeperChallenge) -> some View {
-        HStack {
-            Text("THE GATEKEEPER")
-                .font(Face.display(12, .bold))
-                .tracking(3)
+    private func titleBar(_ challenge: GatekeeperChallenge) -> some View {
+        HStack(spacing: 9) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill((isStrict ? Palette.danger : Palette.accent).gradient)
+                    .frame(width: 24, height: 24)
+                Image(systemName: isStrict ? "building.columns.fill" : "function")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(.white)
+            }
+
+            Text(challenge.appName)
+                .font(Face.display(13, .semibold))
+                .lineLimit(1)
+
+            Chip(text: isStrict ? "Judge" : "Quiz",
+                 tint: isStrict ? Palette.danger : Palette.accent)
+
             Spacer()
-            DocketLine(parts: [
-                "case \(caseNumber(from: challenge.id))",
-                challenge.appName,
-                isStrict ? "strict" : "regular",
-            ])
         }
-        .padding(.horizontal, 26)
+        .padding(.horizontal, 24)
         .padding(.top, 16)
-        .padding(.bottom, 11)
+        .padding(.bottom, 12)
     }
 
-    // MARK: - Recess (busy)
+    // MARK: - Waiting
 
-    private func recess(_ title: String) -> some View {
-        VStack(spacing: 10) {
+    private func waiting(_ title: String) -> some View {
+        VStack(spacing: 14) {
             Spacer()
-            Text(title.uppercased())
-                .font(Face.clerk(10, .semibold))
-                .tracking(2)
-                .foregroundStyle(Palette.muted)
-            ProgressView().controlSize(.small)
+            ProgressView().controlSize(.large)
+            Text(title)
+                .font(Face.body(12.5, .medium))
+                .foregroundStyle(Palette.secondary)
             Spacer()
         }
     }
@@ -86,65 +93,69 @@ struct GatekeeperView: View {
 
     private func judgeView(_ challenge: GatekeeperChallenge) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            Spacer().frame(height: 22)
-
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 7) {
-                    Text("Convince the Judge")
-                        .font(Face.display(29, .semibold))
-                    Text("You moved to open **\(challenge.appName)**. The default answer is deny.")
+            HStack(alignment: .top, spacing: 16) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Make your case")
+                        .font(Face.display(26, .bold))
+                    Text("You're trying to open **\(challenge.appName)**. The judge starts from no.")
                         .font(Face.body(13))
-                        .foregroundStyle(Palette.muted)
+                        .foregroundStyle(Palette.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                Spacer(minLength: 16)
+                Spacer(minLength: 8)
                 Countdown(remaining: timeRemaining, total: judgeTimeLimit)
             }
+            .padding(.bottom, 16)
 
-            Spacer().frame(height: 20)
-
-            SectionRule(title: "Statement of the accused")
-            ZStack(alignment: .topLeading) {
-                TextEditor(text: $argument)
-                    .font(Face.body(12.5))
-                    .scrollContentBackground(.hidden)
-                    .padding(.top, 8)
-                    .disabled(isBusy)
-
-                if argument.isEmpty {
-                    Text("Be specific. Name the deadline.")
+            Card(padding: 0) {
+                ZStack(alignment: .topLeading) {
+                    TextEditor(text: $argument)
                         .font(Face.body(12.5))
-                        .foregroundStyle(Palette.faint)
-                        .padding(.top, 13)
-                        .padding(.leading, 5)
-                        .allowsHitTesting(false)
+                        .scrollContentBackground(.hidden)
+                        .padding(10)
+                        .focused($argumentFocused)
+                        .disabled(isBusy)
+
+                    if argument.isEmpty {
+                        Text("Be specific. Name the deadline.")
+                            .font(Face.body(12.5))
+                            .foregroundStyle(Palette.tertiary)
+                            .padding(.horizontal, 15)
+                            .padding(.vertical, 18)
+                            .allowsHitTesting(false)
+                    }
                 }
+                .frame(maxHeight: .infinity)
             }
             .frame(maxHeight: .infinity)
-            Rule()
 
-            Text("Boredom, “just five minutes”, and anything that can wait are denied on sight.")
+            Label("Boredom, \"just five minutes\", and anything that can wait are refused on sight.",
+                  systemImage: "info.circle")
                 .font(Face.body(11))
-                .foregroundStyle(Palette.faint)
-                .padding(.top, 8)
+                .foregroundStyle(Palette.tertiary)
+                .padding(.top, 9)
                 .fixedSize(horizontal: false, vertical: true)
 
             HStack {
-                Button("Withdraw") { giveUp() }
-                    .buttonStyle(PlainActionStyle())
+                Button("Never mind") { giveUp() }
+                    .buttonStyle(GhostButtonStyle())
                 Spacer()
-                Button("Submit argument") {
-                    isBusy = true
-                    Task {
-                        await blocker.judge(argument: argument)
-                        isBusy = false
-                    }
-                }
-                .buttonStyle(SealButtonStyle(tint: Palette.seal))
-                .disabled(argument.trimmingCharacters(in: .whitespaces).isEmpty || isBusy)
-                .keyboardShortcut(.return)
+                Button("Submit argument") { submitArgument() }
+                    .buttonStyle(PrimaryButtonStyle(tint: Palette.danger))
+                    .disabled(argument.trimmingCharacters(in: .whitespaces).isEmpty || isBusy)
+                    .keyboardShortcut(.return, modifiers: .command)
             }
             .padding(.vertical, 16)
+        }
+        .onAppear { argumentFocused = true }
+    }
+
+    private func submitArgument() {
+        guard !argument.trimmingCharacters(in: .whitespaces).isEmpty, !isBusy else { return }
+        isBusy = true
+        Task {
+            await blocker.judge(argument: argument)
+            isBusy = false
         }
     }
 
@@ -152,53 +163,48 @@ struct GatekeeperView: View {
 
     private func problemView(_ problem: GeneratedProblem) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            Spacer().frame(height: 20)
+            VStack(alignment: .leading, spacing: 5) {
+                Text("One question")
+                    .font(Face.display(26, .bold))
+                Chip(text: problem.topic, tint: Palette.accent)
+            }
+            .padding(.bottom, 14)
 
-            Text("Examination")
-                .font(Face.display(29, .semibold))
-            Text(problem.topic)
-                .font(Face.clerk(10))
-                .tracking(1)
-                .foregroundStyle(Palette.muted)
-                .padding(.top, 5)
-                .lineLimit(1)
-
-            Spacer().frame(height: 16)
-
-            SectionRule(title: "Question")
-            ScrollView {
-                LaTeXWebView(text: problem.problem, dynamicHeight: $problemHeight)
-                    .frame(height: max(problemHeight, 60))
+            Card {
+                ScrollView {
+                    LaTeXWebView(text: problem.problem, dynamicHeight: $problemHeight)
+                        .frame(height: max(problemHeight, 60))
+                }
             }
             .frame(maxHeight: .infinity)
-            Rule()
 
-            HStack(alignment: .bottom, spacing: 16) {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("ANSWER")
-                        .font(Face.clerk(9, .semibold))
-                        .tracking(1.3)
-                        .foregroundStyle(Palette.muted)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Your answer")
+                    .font(Face.body(11, .medium))
+                    .foregroundStyle(Palette.secondary)
+                HStack(spacing: 10) {
                     TextField("", text: $answer)
-                        .ruledField(focused: answerFocused)
+                        .softField(focused: answerFocused)
+                        .font(Face.mono(13))
                         .focused($answerFocused)
                         .disabled(isBusy)
                         .onSubmit(submitAnswer)
+                    Button("Submit") { submitAnswer() }
+                        .buttonStyle(PrimaryButtonStyle())
+                        .disabled(answer.trimmingCharacters(in: .whitespaces).isEmpty || isBusy)
+                        .keyboardShortcut(.return)
                 }
-                Button("Submit") { submitAnswer() }
-                    .buttonStyle(SealButtonStyle())
-                    .disabled(answer.trimmingCharacters(in: .whitespaces).isEmpty || isBusy)
-                    .keyboardShortcut(.return)
             }
             .padding(.top, 14)
 
             HStack {
-                Button("Withdraw") { giveUp() }
-                    .buttonStyle(PlainActionStyle())
+                Button("Give up") { giveUp() }
+                    .buttonStyle(GhostButtonStyle())
                 Spacer()
             }
             .padding(.vertical, 14)
         }
+        .onAppear { answerFocused = true }
     }
 
     private func submitAnswer() {
@@ -213,30 +219,45 @@ struct GatekeeperView: View {
     // MARK: - Verdict
 
     private func verdictView(granted: Bool, reason: String) -> some View {
-        let tint = granted ? Palette.verdigris : Palette.seal
-
-        return VStack(spacing: 0) {
+        VStack(spacing: 0) {
             Spacer()
 
-            Stamp(text: granted ? "Granted" : "Denied", tint: tint)
+            Verdict(granted: granted)
 
             Text(reason)
-                .font(Face.display(15))
-                .foregroundStyle(Palette.muted)
+                .font(Face.body(13))
+                .foregroundStyle(Palette.secondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 30)
-                .padding(.top, 26)
+                .padding(.top, 18)
+
+            if !granted, let challenge = blocker.pendingChallenge {
+                Text(cooldownNote(for: challenge))
+                    .font(Face.body(11))
+                    .foregroundStyle(Palette.tertiary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 30)
+                    .padding(.top, 10)
+            }
 
             Spacer()
 
-            Button(granted ? "Proceed" : "Close") {
+            Button(granted ? "Go ahead" : "Back to work") {
                 blocker.resolveChallenge()
                 closeWindow()
             }
-            .buttonStyle(OutlineButtonStyle(tint: Palette.ink))
+            .buttonStyle(PrimaryButtonStyle(tint: granted ? Palette.success : Palette.accent))
             .keyboardShortcut(.return)
             .padding(.bottom, 26)
+        }
+    }
+
+    private func cooldownNote(for challenge: GatekeeperChallenge) -> String {
+        switch challenge.trigger {
+        case .launch:     "\(challenge.appName) will close."
+        case .activation: "\(challenge.appName) will be hidden — anything open in it is untouched."
         }
     }
 

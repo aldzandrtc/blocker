@@ -15,6 +15,16 @@ enum AIProvider: String, CaseIterable, Codable {
         }
     }
 
+    /// Fallback source for a key when `secrets.json` has none for this provider.
+    var environmentVariable: String {
+        switch self {
+        case .anthropic: "ANTHROPIC_API_KEY"
+        case .openai:    "OPENAI_API_KEY"
+        case .deepseek:  "DEEPSEEK_API_KEY"
+        case .gemini:    "GEMINI_API_KEY"
+        }
+    }
+
     var defaultEndpoint: String {
         switch self {
         case .anthropic: "https://api.anthropic.com/v1/messages"
@@ -36,7 +46,7 @@ enum AIProvider: String, CaseIterable, Codable {
     var models: [String] {
         switch self {
         case .anthropic:
-            ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"]
+            ["claude-opus-5", "claude-sonnet-5", "claude-opus-4-8", "claude-haiku-4-5"]
         case .openai:
             ["gpt-4o", "gpt-4.1", "o4-mini", "o3-mini"]
         case .deepseek:

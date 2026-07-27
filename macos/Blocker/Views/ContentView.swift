@@ -4,13 +4,18 @@ struct ContentView: View {
     @Environment(SettingsStore.self) private var settings
 
     @State private var selection: NavItem = .home
+    /// `extensionConnected` is derived from a timestamp, so nothing would tell
+    /// the view to re-read it. This keeps the badge honest.
+    @State private var heartbeat = Date()
+
+    private let ticker = Timer.publish(every: 20, on: .main, in: .common).autoconnect()
 
     var body: some View {
         VStack(spacing: 0) {
-            masthead
-            Rule(color: Palette.ink, weight: 2)
+            header
             tabs
-            Rule()
+
+            Divider().overlay(Palette.strokeFaint)
 
             Group {
                 switch selection {
@@ -23,56 +28,69 @@ struct ContentView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(width: 440, height: 520)
-        .background(Palette.paper)
-        .foregroundStyle(Palette.ink)
+        .frame(width: 440, height: 560)
+        .background(Palette.canvas)
+        .foregroundStyle(Palette.text)
+        .onReceive(ticker) { heartbeat = $0 }
     }
 
-    // MARK: - Masthead
+    // MARK: - Header
 
-    private var masthead: some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text("BLOCKER")
-                .font(Face.display(19, .bold))
-                .tracking(3.5)
+    private var header: some View {
+        HStack(spacing: 9) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(Palette.accent.gradient)
+                    .frame(width: 24, height: 24)
+                Image(systemName: "shield.lefthalf.filled")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(.white)
+            }
+
+            Text("Blocker")
+                .font(Face.display(16, .bold))
 
             Spacer()
 
-            HStack(spacing: 12) {
-                indicator("API", on: settings.hasApiKey)
-                indicator("EXT", on: settings.extensionConnected)
-            }
+            statusDot("API", on: settings.hasApiKey,
+                      help: settings.hasApiKey ? "API key configured" : "No API key — add one in Settings")
+            statusDot("Extension", on: settings.extensionConnected,
+                      help: settings.extensionConnected ? "Chrome extension connected" : "Chrome extension not answering")
         }
         .padding(.horizontal, Metrics.gutter)
-        .padding(.top, 14)
-        .padding(.bottom, 10)
+        .padding(.top, 13)
+        .padding(.bottom, 11)
+        .id(heartbeat)
     }
 
-    /// Status reads as a ledger mark, not a coloured dot on a chat app.
-    private func indicator(_ label: String, on: Bool) -> some View {
+    private func statusDot(_ label: String, on: Bool, help: String) -> some View {
         HStack(spacing: 5) {
+            Circle()
+                .fill(on ? Palette.success : Palette.tertiary.opacity(0.5))
+                .frame(width: 6, height: 6)
             Text(label)
-                .font(Face.clerk(9, .semibold))
-                .tracking(1.2)
-                .foregroundStyle(on ? Palette.ink : Palette.faint)
-            Rectangle()
-                .fill(on ? Palette.verdigris : Palette.seal)
-                .frame(width: 5, height: 5)
+                .font(Face.body(10.5, .medium))
+                .foregroundStyle(on ? Palette.secondary : Palette.tertiary)
         }
-        .help(on ? "\(label): connected" : "\(label): not connected")
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(Capsule().fill(Palette.surface))
+        .overlay(Capsule().strokeBorder(Palette.strokeFaint, lineWidth: 1))
+        .help(help)
     }
 
     // MARK: - Tabs
 
     private var tabs: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: 4) {
             ForEach(NavItem.allCases, id: \.self) { item in
                 TabButton(item: item, isSelected: selection == item) {
-                    selection = item
+                    withAnimation(.easeOut(duration: 0.12)) { selection = item }
                 }
             }
         }
-        .padding(.horizontal, Metrics.gutter - 6)
+        .padding(.horizontal, Metrics.gutter)
+        .padding(.bottom, 10)
     }
 }
 
@@ -85,18 +103,21 @@ private struct TabButton: View {
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 6) {
-                Text(item.rawValue.uppercased())
-                    .font(Face.clerk(9, isSelected ? .bold : .medium))
-                    .tracking(1.2)
-                    .foregroundStyle(isSelected ? Palette.ink
-                                     : (hovering ? Palette.muted : Palette.faint))
-                Rectangle()
-                    .fill(isSelected ? Palette.seal : Color.clear)
-                    .frame(height: 2)
+            VStack(spacing: 3) {
+                Image(systemName: item.icon)
+                    .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
+                Text(item.title)
+                    .font(Face.body(9.5, isSelected ? .semibold : .medium))
             }
-            .padding(.top, 9)
+            .foregroundStyle(isSelected ? Palette.accent
+                             : (hovering ? Palette.secondary : Palette.tertiary))
             .frame(maxWidth: .infinity)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: Metrics.smallRadius, style: .continuous)
+                    .fill(isSelected ? Palette.accent.opacity(0.12)
+                          : (hovering ? Palette.strokeFaint : .clear))
+            )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -106,9 +127,25 @@ private struct TabButton: View {
 }
 
 enum NavItem: String, CaseIterable {
-    case home      = "Docket"
-    case blocklist = "Blocklist"
-    case profile   = "Profile"
-    case history   = "Record"
-    case settings  = "Settings"
+    case home, blocklist, profile, history, settings
+
+    var title: String {
+        switch self {
+        case .home:      "Today"
+        case .blocklist: "Blocked"
+        case .profile:   "Profile"
+        case .history:   "Progress"
+        case .settings:  "Settings"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .home:      "square.grid.2x2.fill"
+        case .blocklist: "hand.raised.fill"
+        case .profile:   "person.fill"
+        case .history:   "chart.bar.fill"
+        case .settings:  "gearshape.fill"
+        }
+    }
 }

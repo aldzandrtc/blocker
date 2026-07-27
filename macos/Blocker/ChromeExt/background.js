@@ -110,7 +110,7 @@ async function grantAccess(domain) {
 
 // --- Navigation blocking ---
 
-chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
+async function guardNavigation(details) {
   if (details.frameId !== 0) return; // only top-level
 
   let url;
@@ -138,6 +138,17 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
     `&original=${encodeURIComponent(details.url)}`;
 
   chrome.tabs.update(details.tabId, { url: gatekeeperUrl });
+}
+
+// These handlers are async, so the page can start loading before the blocklist
+// lookup finishes — long enough for a video to autoplay behind the gate.
+// onBeforeNavigate usually wins the race; onCommitted is the backstop for when
+// it doesn't, and for redirects that land on a blocked host.
+chrome.webNavigation.onBeforeNavigate.addListener(guardNavigation);
+chrome.webNavigation.onCommitted.addListener((details) => {
+  // Our own gatekeeper page commits too — don't gate the gate.
+  if (details.url.startsWith(chrome.runtime.getURL(''))) return;
+  guardNavigation(details);
 });
 
 // --- Periodic sync (the service worker does not stay alive on its own) ---
@@ -153,11 +164,12 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 // --- Message handling from gatekeeper page ---
 
 const handlers = {
-  judge: (msg) => judgeRequest(msg.appName, msg.argument),
-  getProblem: () => getProblem(),
-  verify: (msg) => verifyAnswer(msg.problem, msg.answer),
+  judge: (msg) => judgeRequest(msg.appName, msg.argument, msg.domain),
+  getProblem: (msg) => getProblem(msg.domain),
+  verify: (msg) => verifyAnswer(msg.problem, msg.answer, msg.domain),
   reportHistory: (msg) => reportHistory(msg.topic, msg.correct),
   grantAccess: (msg) => grantAccess(msg.domain),
+  cooldown: (msg) => checkCooldown(msg.domain),
   ping: () => isMacAppReachable(),
 };
 
@@ -181,31 +193,50 @@ async function postJSON(path, payload) {
   });
   const data = await res.json().catch(() => null);
   if (!res.ok) {
+    // A cooldown is a normal outcome, not a failure — pass it through with its
+    // countdown so the page can show a timer instead of a bare error.
+    if (res.status === 429) {
+      return { error: data?.error || 'Cooling down.', cooldownSeconds: data?.cooldown_seconds || 0 };
+    }
     throw new Error(data?.error || `Blocker app returned ${res.status}`);
   }
   return data;
 }
 
-async function judgeRequest(appName, argument) {
-  return postJSON('/judge', { app_name: appName, argument });
+async function judgeRequest(appName, argument, domain) {
+  return postJSON('/judge', { app_name: appName, argument, domain });
 }
 
-async function getProblem() {
-  const res = await fetch(`${SYNC_HOST}/problem`);
+async function getProblem(domain) {
+  const res = await fetch(`${SYNC_HOST}/problem?domain=${encodeURIComponent(domain || '')}`);
   const data = await res.json().catch(() => null);
   if (!res.ok) {
-    return { error: data?.error || `Blocker app returned ${res.status}` };
+    return {
+      error: data?.error || `Blocker app returned ${res.status}`,
+      cooldownSeconds: res.status === 429 ? data?.cooldown_seconds || 0 : 0,
+    };
   }
   return data;
 }
 
-async function verifyAnswer(problem, answer) {
+async function checkCooldown(domain) {
+  try {
+    const res = await fetch(`${SYNC_HOST}/cooldown?domain=${encodeURIComponent(domain || '')}`);
+    if (!res.ok) return { seconds: 0 };
+    return await res.json();
+  } catch {
+    return { seconds: 0 };
+  }
+}
+
+async function verifyAnswer(problem, answer, domain) {
   return postJSON('/verify', {
     problem_text: problem.problem,
     expected_answer: problem.answer,
     answer_type: problem.answerType,
     tolerance: problem.tolerance,
     topic: problem.topic,
+    domain,
     answer,
   });
 }

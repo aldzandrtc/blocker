@@ -23,6 +23,19 @@ struct BlockedTarget: Identifiable, Codable, Hashable {
         }
     }
 
+    var isWebsite: Bool {
+        if case .website = kind { return true }
+        return false
+    }
+
+    /// The bundle id or bare domain, shown under the display name.
+    var subtitle: String {
+        switch kind {
+        case .app(let bundleID, _, _): return bundleID
+        case .website(let domain, _):  return domain
+        }
+    }
+
     enum Category: String, Codable {
         case strict
         case regular

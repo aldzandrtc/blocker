@@ -32,15 +32,15 @@ struct LaTeXWebView: NSViewRepresentable {
         <html><head><meta charset="utf-8">
         <meta name="viewport" content="width=device-width,initial-scale=1">
         <style>
-        /* Matches Palette.ink / Face.body in Theme.swift. */
+        /* Matches Palette.text / Face.body in Theme.swift. */
         * { margin:0; padding:0; box-sizing:border-box; }
         body {
             font-family:-apple-system,BlinkMacSystemFont,sans-serif;
-            font-size:15px; color:#1A1714; background:transparent;
-            padding:6px 2px; line-height:1.75;
+            font-size:15px; color:#14161C; background:transparent;
+            padding:2px; line-height:1.7;
         }
         @media (prefers-color-scheme: dark) {
-            body { color:#EDE8DF; }
+            body { color:#F2F3F7; }
         }
         .katex { font-size:1.08em; }
         .katex-display { margin:14px 0; }

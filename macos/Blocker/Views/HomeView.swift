@@ -2,10 +2,13 @@ import SwiftUI
 
 struct HomeView: View {
     @Environment(SettingsStore.self) private var settings
+    @Environment(AppBlockerService.self) private var blocker
 
     @State private var extensionDismissed = false
     @State private var showInstallHelp = false
+    @State private var now = Date()
 
+    private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     private let githubURL = URL(string: "https://github.com/aldzandrtc/blocker")!
 
     var body: some View {
@@ -16,83 +19,189 @@ struct HomeView: View {
                 }
 
                 standing
+                if !activeGrants.isEmpty { grants }
+                if !cooldowns.isEmpty { coolingDown }
                 blocklistDigest
                 examsDigest
             }
             .padding(.horizontal, Metrics.gutter)
-            .padding(.vertical, 16)
+            .padding(.vertical, 14)
         }
+        .onReceive(ticker) { now = $0 }
     }
 
     // MARK: - Standing
 
     private var standing: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SectionRule(title: "Standing", trailing: Exam.dateFormatter.string(from: Date()))
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader(title: "Today", trailing: friendlyDate)
 
-            HStack(alignment: .top, spacing: 0) {
-                figure(totalProblems, "solved")
-                figure(accuracyStr, "accuracy", tint: accuracyTint)
-                figure("\(settings.blockedTargets.count)", "blocked")
-                figure("\(upcomingExams.count)", "exams")
+            Card {
+                VStack(spacing: 14) {
+                    HStack(alignment: .top, spacing: 0) {
+                        Stat(value: "\(settings.solvedToday)", label: "solved today",
+                             tint: Palette.accent, systemImage: "checkmark.seal.fill")
+                        Stat(value: "\(settings.currentStreak)", label: streakLabel,
+                             tint: settings.currentStreak > 0 ? Palette.warning : Palette.text,
+                             systemImage: "flame.fill")
+                        Stat(value: accuracyStr, label: "accuracy",
+                             tint: accuracyTint, systemImage: "target")
+                        Stat(value: "\(settings.blockedTargets.count)", label: "blocked",
+                             systemImage: "hand.raised.fill")
+                    }
+
+                    if let accuracy = accuracyValue {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Meter(fraction: accuracy, tint: accuracyTint)
+                            Text("\(totalCorrect) of \(totalProblems) problems answered correctly")
+                                .font(Face.body(10.5))
+                                .foregroundStyle(Palette.tertiary)
+                        }
+                    } else {
+                        Text("No problems answered yet — they appear when you open something blocked.")
+                            .font(Face.body(11))
+                            .foregroundStyle(Palette.tertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
             }
         }
     }
 
-    private func figure(_ value: String, _ label: String, tint: Color = Palette.ink) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(value)
-                .font(Face.display(27, .medium))
-                .foregroundStyle(tint)
-            Text(label.uppercased())
-                .font(Face.clerk(8, .medium))
-                .tracking(1.2)
-                .foregroundStyle(Palette.faint)
+    private var streakLabel: String { settings.currentStreak == 1 ? "day streak" : "day streak" }
+
+    // MARK: - Grants
+
+    private var activeGrants: [ActiveGrant] {
+        _ = now // recompute as the clock ticks
+        return blocker.activeGrants
+    }
+
+    private var grants: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader(title: "Open right now",
+                          trailing: "\(activeGrants.count) app\(activeGrants.count == 1 ? "" : "s")")
+
+            Card(tint: Palette.success) {
+                VStack(spacing: 0) {
+                    ForEach(Array(activeGrants.enumerated()), id: \.element.id) { index, grant in
+                        HStack(spacing: 10) {
+                            Image(systemName: "lock.open.fill")
+                                .font(.system(size: 10))
+                                .foregroundStyle(Palette.success)
+                            Text(grant.name)
+                                .font(Face.body(12.5, .medium))
+                                .lineLimit(1)
+                            Spacer(minLength: 8)
+                            Chip(text: "\(clockText(grant.secondsRemaining)) left", tint: Palette.success)
+                            Button("Close") { blocker.revokeGrant(grant.bundleID) }
+                                .buttonStyle(GhostButtonStyle())
+                                .help("End this access now — no need to argue, tightening is always free")
+                        }
+                        .padding(.vertical, 6)
+
+                        if index < activeGrants.count - 1 {
+                            Divider().overlay(Palette.strokeFaint)
+                        }
+                    }
+                }
+            }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: - Cooldowns
+
+    private var cooldowns: [(name: String, seconds: Int)] {
+        _ = now
+        return settings.blockedTargets.compactMap { target in
+            let seconds = settings.cooldownRemaining(for: target.id)
+            guard seconds > 0 else { return nil }
+            return (target.displayName, seconds)
+        }
+        .sorted { $0.seconds < $1.seconds }
+    }
+
+    private var coolingDown: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader(title: "Cooling down")
+
+            Card(tint: Palette.warning) {
+                VStack(spacing: 0) {
+                    ForEach(Array(cooldowns.enumerated()), id: \.offset) { index, entry in
+                        HStack(spacing: 10) {
+                            Image(systemName: "hourglass")
+                                .font(.system(size: 10))
+                                .foregroundStyle(Palette.warning)
+                            Text(entry.name)
+                                .font(Face.body(12.5, .medium))
+                                .lineLimit(1)
+                            Spacer(minLength: 8)
+                            Text(clockText(entry.seconds))
+                                .font(Face.mono(11, .semibold))
+                                .foregroundStyle(Palette.warning)
+                        }
+                        .padding(.vertical, 6)
+
+                        if index < cooldowns.count - 1 {
+                            Divider().overlay(Palette.strokeFaint)
+                        }
+                    }
+
+                    Text("A failed attempt locks a target for \(settings.profile.cooldownMinutes) minutes.")
+                        .font(Face.body(10.5))
+                        .foregroundStyle(Palette.tertiary)
+                        .padding(.top, 8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
     }
 
     // MARK: - Blocklist digest
 
     private var blocklistDigest: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionRule(title: "Blocklist",
-                        trailing: settings.blockedTargets.isEmpty ? nil
-                                : "\(settings.blockedTargets.count) entries")
+            SectionHeader(title: "Blocked",
+                          trailing: settings.blockedTargets.isEmpty ? nil
+                                  : "\(settings.blockedTargets.count) total")
 
-            if settings.blockedTargets.isEmpty {
-                Text("Nothing is under injunction.")
-                    .font(Face.body(12))
-                    .foregroundStyle(Palette.faint)
-            } else {
-                VStack(spacing: 0) {
-                    ForEach(Array(settings.blockedTargets.prefix(5).enumerated()), id: \.element.id) { index, target in
-                        HStack(spacing: 10) {
-                            Text(String(format: "%02d", index + 1))
-                                .font(Face.clerk(9))
-                                .foregroundStyle(Palette.faint)
-                            Text(target.displayName)
-                                .font(Face.body(12.5))
-                                .lineLimit(1)
-                            Spacer(minLength: 8)
-                            Text(target.category == .strict ? "JUDGE" : "EXAM")
-                                .font(Face.clerk(9, .semibold))
-                                .tracking(1.1)
-                                .foregroundStyle(target.category == .strict ? Palette.seal : Palette.muted)
+            Card {
+                if settings.blockedTargets.isEmpty {
+                    Text("Nothing is blocked yet. Add a site or app under Blocked.")
+                        .font(Face.body(11.5))
+                        .foregroundStyle(Palette.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    VStack(spacing: 0) {
+                        let shown = Array(settings.blockedTargets.prefix(5))
+                        ForEach(Array(shown.enumerated()), id: \.element.id) { index, target in
+                            HStack(spacing: 10) {
+                                Image(systemName: target.isWebsite ? "globe" : "app.fill")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(Palette.tertiary)
+                                    .frame(width: 14)
+                                Text(target.displayName)
+                                    .font(Face.body(12.5))
+                                    .lineLimit(1)
+                                Spacer(minLength: 8)
+                                Chip(text: target.category == .strict ? "Judge" : "Quiz",
+                                     tint: Palette.tint(for: target.category))
+                            }
+                            .padding(.vertical, 6)
+
+                            if index < shown.count - 1 {
+                                Divider().overlay(Palette.strokeFaint)
+                            }
                         }
-                        .padding(.vertical, 6)
 
-                        if index < min(4, settings.blockedTargets.count - 1) {
-                            Rule(color: Palette.ruleFaint)
+                        if settings.blockedTargets.count > 5 {
+                            Text("and \(settings.blockedTargets.count - 5) more")
+                                .font(Face.body(10.5))
+                                .foregroundStyle(Palette.tertiary)
+                                .padding(.top, 8)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
-                }
-
-                if settings.blockedTargets.count > 5 {
-                    Text("and \(settings.blockedTargets.count - 5) more")
-                        .font(Face.clerk(9))
-                        .foregroundStyle(Palette.faint)
-                        .padding(.top, 2)
                 }
             }
         }
@@ -108,34 +217,36 @@ struct HomeView: View {
 
     private var examsDigest: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionRule(title: "Calendar")
+            SectionHeader(title: "Upcoming exams")
 
-            if upcomingExams.isEmpty {
-                Text("No examinations scheduled.")
-                    .font(Face.body(12))
-                    .foregroundStyle(Palette.faint)
-            } else {
-                VStack(spacing: 0) {
-                    ForEach(Array(upcomingExams.prefix(3).enumerated()), id: \.element.id) { index, exam in
-                        let days = exam.daysUntil()
-                        HStack(spacing: 10) {
-                            Text(exam.subject)
-                                .font(Face.body(12.5))
-                                .lineLimit(1)
-                            Spacer(minLength: 8)
-                            Text(exam.date)
-                                .font(Face.clerk(9))
-                                .foregroundStyle(Palette.faint)
-                            Text(days == 0 ? "TODAY" : "\(days)D")
-                                .font(Face.clerk(10, .semibold))
-                                .tracking(0.8)
-                                .foregroundStyle(days <= 3 ? Palette.seal : Palette.muted)
-                                .frame(width: 44, alignment: .trailing)
-                        }
-                        .padding(.vertical, 6)
+            Card {
+                if upcomingExams.isEmpty {
+                    Text("No exams scheduled. Add one in Profile and problems will lean toward that subject.")
+                        .font(Face.body(11.5))
+                        .foregroundStyle(Palette.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    VStack(spacing: 0) {
+                        let shown = Array(upcomingExams.prefix(3))
+                        ForEach(Array(shown.enumerated()), id: \.element.id) { index, exam in
+                            let days = exam.daysUntil()
+                            HStack(spacing: 10) {
+                                Text(exam.subject)
+                                    .font(Face.body(12.5, .medium))
+                                    .lineLimit(1)
+                                Spacer(minLength: 8)
+                                Text(exam.date)
+                                    .font(Face.body(10.5))
+                                    .foregroundStyle(Palette.tertiary)
+                                Chip(text: days == 0 ? "Today" : "\(days)d",
+                                     tint: days <= 3 ? Palette.danger : Palette.accent,
+                                     filled: days <= 3)
+                            }
+                            .padding(.vertical, 6)
 
-                        if index < min(2, upcomingExams.count - 1) {
-                            Rule(color: Palette.ruleFaint)
+                            if index < shown.count - 1 {
+                                Divider().overlay(Palette.strokeFaint)
+                            }
                         }
                     }
                 }
@@ -146,76 +257,83 @@ struct HomeView: View {
     // MARK: - Extension notice
 
     private var extensionNotice: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack(alignment: .top) {
-                Text("NOTICE")
-                    .font(Face.clerk(9, .bold))
-                    .tracking(1.4)
-                    .foregroundStyle(Palette.brass)
-                Spacer()
-                Button("Dismiss") { extensionDismissed = true }
-                    .buttonStyle(PlainActionStyle(tint: Palette.faint))
-            }
-
-            Text("The browser extension is not answering.")
-                .font(Face.display(14))
-
-            Text("Websites stay open until it is installed. Applications are still gated.")
-                .font(Face.body(11.5))
-                .foregroundStyle(Palette.muted)
-                .fixedSize(horizontal: false, vertical: true)
-
-            HStack(spacing: 14) {
-                Button("Download") { NSWorkspace.shared.open(githubURL) }
-                    .buttonStyle(OutlineButtonStyle(tint: Palette.brass))
-                Button(showInstallHelp ? "Hide steps" : "How to install") {
-                    withAnimation(.easeInOut(duration: 0.12)) { showInstallHelp.toggle() }
+        Card(tint: Palette.warning) {
+            VStack(alignment: .leading, spacing: 9) {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Palette.warning)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Browser extension isn't connected")
+                            .font(Face.display(13, .semibold))
+                        Text("Websites stay open until it's installed. Apps are still blocked.")
+                            .font(Face.body(11))
+                            .foregroundStyle(Palette.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 4)
+                    Button {
+                        withAnimation(.easeOut(duration: 0.12)) { extensionDismissed = true }
+                    } label: {
+                        Image(systemName: "xmark")
+                    }
+                    .buttonStyle(IconButtonStyle())
+                    .accessibilityLabel("Dismiss")
                 }
-                .buttonStyle(PlainActionStyle())
-            }
 
-            if showInstallHelp {
-                VStack(alignment: .leading, spacing: 5) {
-                    step("i", "Download or clone the repository.")
-                    step("ii", "Open chrome://extensions and enable Developer mode.")
-                    step("iii", "Load unpacked → BlockerChromeExt on your Desktop.")
+                HStack(spacing: 8) {
+                    Button("Get the extension") { NSWorkspace.shared.open(githubURL) }
+                        .buttonStyle(SecondaryButtonStyle(tint: Palette.warning))
+                    Button(showInstallHelp ? "Hide steps" : "How to install") {
+                        withAnimation(.easeOut(duration: 0.12)) { showInstallHelp.toggle() }
+                    }
+                    .buttonStyle(GhostButtonStyle())
                 }
-                .padding(.top, 3)
+
+                if showInstallHelp {
+                    VStack(alignment: .leading, spacing: 5) {
+                        step(1, "Download or clone the repository, then run `make app`.")
+                        step(2, "Open chrome://extensions and turn on Developer mode.")
+                        step(3, "Load unpacked → BlockerChromeExt on your Desktop.")
+                    }
+                }
             }
         }
-        .padding(13)
-        .background(Palette.surface)
-        .overlay(
-            Rectangle().fill(Palette.brass).frame(width: 3),
-            alignment: .leading
-        )
-        .overlay(Rectangle().strokeBorder(Palette.rule, lineWidth: 1))
     }
 
-    private func step(_ numeral: String, _ text: String) -> some View {
+    private func step(_ number: Int, _ text: String) -> some View {
         HStack(alignment: .top, spacing: 8) {
-            Text(numeral)
-                .font(Face.clerk(9))
-                .foregroundStyle(Palette.brass)
-                .frame(width: 16, alignment: .trailing)
+            Text("\(number)")
+                .font(Face.body(9.5, .bold))
+                .foregroundStyle(Palette.warning)
+                .frame(width: 15, height: 15)
+                .background(Circle().fill(Palette.warning.opacity(0.15)))
             Text(text)
-                .font(Face.body(11.5))
-                .foregroundStyle(Palette.muted)
+                .font(Face.body(11))
+                .foregroundStyle(Palette.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
 
     // MARK: - Derived
 
-    private var totalProblems: String {
-        "\(settings.problemHistory.reduce(0) { $0 + $1.total })"
+    private var friendlyDate: String {
+        let f = DateFormatter()
+        f.dateFormat = "EEEE, d MMM"
+        return f.string(from: Date())
+    }
+
+    private var totalProblems: Int {
+        settings.problemHistory.reduce(0) { $0 + $1.total }
+    }
+
+    private var totalCorrect: Int {
+        settings.problemHistory.reduce(0) { $0 + $1.correct }
     }
 
     private var accuracyValue: Double? {
-        let total = settings.problemHistory.reduce(0) { $0 + $1.total }
-        guard total > 0 else { return nil }
-        let correct = settings.problemHistory.reduce(0) { $0 + $1.correct }
-        return Double(correct) / Double(total)
+        guard totalProblems > 0 else { return nil }
+        return Double(totalCorrect) / Double(totalProblems)
     }
 
     private var accuracyStr: String {
@@ -224,7 +342,8 @@ struct HomeView: View {
     }
 
     private var accuracyTint: Color {
-        guard let accuracyValue else { return Palette.ink }
-        return accuracyValue >= 0.7 ? Palette.verdigris : Palette.seal
+        guard let accuracyValue else { return Palette.text }
+        if accuracyValue >= 0.7 { return Palette.success }
+        return accuracyValue >= 0.4 ? Palette.warning : Palette.danger
     }
 }

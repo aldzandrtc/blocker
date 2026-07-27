@@ -1,8 +1,18 @@
+# --- Secrets: never commit API keys ---
+# Blocker reads keys from secrets.json (see secrets.example.json).
+secrets.json
+.env
+.env.*
+*.secrets.json
+
+# --- Build output ---
 .build/
 build/
-.DS_Store
-*.xcodeproj
-xcuserdata/
 *.app
 *.icns
 .iconset/
+
+# --- Xcode / macOS ---
+.DS_Store
+*.xcodeproj
+xcuserdata/

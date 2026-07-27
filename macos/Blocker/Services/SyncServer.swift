@@ -100,22 +100,25 @@ final class SyncServer {
     }
 
     private func requestComplete(_ data: Data) -> Bool {
-        guard let str = String(data: data, encoding: .utf8) else { return true }
+        // Decoding the whole buffer would fail mid-way through a multi-byte
+        // character and report a half-read request as complete. Headers are
+        // ASCII, so decode only up to the blank line that ends them.
+        let separator = Data("\r\n\r\n".utf8)
+        guard let headerEnd = data.range(of: separator) else { return false }
+        guard let str = String(data: data[..<headerEnd.upperBound], encoding: .utf8) else { return true }
+
         if str.hasPrefix("GET") || str.hasPrefix("HEAD") || str.hasPrefix("OPTIONS") {
-            return str.contains("\r\n\r\n")
+            return true
         }
         if let clRange = str.range(of: "Content-Length:") {
             let after = str[clRange.upperBound...]
                 .trimmingCharacters(in: .whitespaces)
-            if let clEnd = after.firstIndex(where: { !$0.isNumber }),
-               let contentLength = Int(after[..<clEnd]) {
-                if let bodyStart = str.range(of: "\r\n\r\n") {
-                    let body = str[bodyStart.upperBound...]
-                    return body.utf8.count >= contentLength
-                }
+            let digits = after.prefix { $0.isNumber }
+            if let contentLength = Int(digits) {
+                return data.count - headerEnd.upperBound >= contentLength
             }
         }
-        return str.contains("\r\n\r\n")
+        return true
     }
 
     // MARK: - Request Processing
@@ -123,11 +126,21 @@ final class SyncServer {
     private func process(_ raw: String) async -> String {
         let parts = parseRequest(raw)
         let method = parts.method
-        let path = parts.path
+        // The gatekeeper page appends `?domain=…`, so route on the path alone.
+        let path = parts.path.components(separatedBy: "?").first ?? parts.path
+        let query = Self.queryItems(from: parts.path)
         let body = parts.body
-        // Only the extension may talk to us. Without this, any web page you visit
-        // could read the blocklist and profile, or burn API credits.
-        let origin = parts.origin.flatMap { $0.hasPrefix("chrome-extension://") ? $0 : nil }
+
+        // Only the extension may talk to us. Withholding CORS headers is not
+        // enough on its own: a simple cross-origin request (GET, or POST with a
+        // non-preflighted content type) still *runs* here before the browser
+        // discards the response — so any page you visited could burn API credits
+        // on /problem or pop the app open with /activate. Reject outright
+        // instead. A request with no Origin at all is not browser-initiated
+        // (pages cannot suppress the header), so curl and tests still work.
+        guard let origin = extensionOrigin(parts.origin) else {
+            return Self.http(403, #"{"error":"forbidden"}"#)
+        }
 
         await MainActor.run { store.lastExtensionContact = Date() }
 
@@ -148,7 +161,13 @@ final class SyncServer {
             return Self.http(200, json, origin: origin)
 
         case ("GET", "/problem"):
-            return await handleProblem(origin: origin)
+            return await handleProblem(domain: query["domain"], origin: origin)
+
+        case ("GET", "/cooldown"):
+            let seconds = await MainActor.run {
+                query["domain"].map { store.cooldownRemaining(for: "web-\(SettingsStore.normalizeDomain($0))") } ?? 0
+            }
+            return Self.http(200, #"{"seconds":\#(seconds)}"#, origin: origin)
 
         case ("POST", "/judge"):
             return await handleJudge(body: body, origin: origin)
@@ -165,6 +184,13 @@ final class SyncServer {
         default:
             return Self.http(404, #"{"error":"not found"}"#, origin: origin)
         }
+    }
+
+    /// `.some(nil)` means "no Origin header" (a local tool), `.some(.some(o))` an
+    /// approved extension origin, and `nil` a browser origin we refuse to serve.
+    private func extensionOrigin(_ raw: String?) -> String?? {
+        guard let raw, !raw.isEmpty, raw != "null" else { return .some(nil) }
+        return raw.hasPrefix("chrome-extension://") ? .some(raw) : nil
     }
 
     private func parseRequest(_ raw: String) -> (method: String, path: String, body: String?, origin: String?) {
@@ -187,7 +213,10 @@ final class SyncServer {
 
     // MARK: - Handlers
 
-    private func handleProblem(origin: String?) async -> String {
+    private func handleProblem(domain: String?, origin: String?) async -> String {
+        if let waiting = await cooldownRemaining(domain: domain), waiting > 0 {
+            return Self.http(429, cooldownJSON(waiting), origin: origin)
+        }
         let client = await MainActor.run { makeClient() }
         guard !client.apiKey.isEmpty else {
             return Self.http(503, #"{"error":"API key not configured"}"#, origin: origin)
@@ -219,8 +248,15 @@ final class SyncServer {
             return Self.http(503, #"{"error":"API key not configured"}"#, origin: origin)
         }
 
+        let domain = params["domain"] as? String
+        if let waiting = await cooldownRemaining(domain: domain), waiting > 0 {
+            return Self.http(429, cooldownJSON(waiting), origin: origin)
+        }
+
         let judge = BlocklistJudge(client: client)
         let result = await judge.judge(appName: appName, argument: argument)
+        if !result.allowed { await startCooldown(domain: domain) }
+
         let json = (try? JSONSerialization.data(withJSONObject: [
             "allowed": result.allowed, "reason": result.reason
         ])).flatMap { String(data: $0, encoding: .utf8) }
@@ -247,6 +283,8 @@ final class SyncServer {
             topic: params["topic"] as? String ?? "general"
         )
         let result = await gen.verify(problem: problem, studentAnswer: answer)
+        if !result.correct { await startCooldown(domain: params["domain"] as? String) }
+
         let json = (try? JSONSerialization.data(withJSONObject: [
             "correct": result.correct, "explanation": result.explanation
         ])).flatMap { String(data: $0, encoding: .utf8) }
@@ -285,6 +323,46 @@ final class SyncServer {
                 category: target.category.rawValue
             )
         }
+    }
+
+    // MARK: - Cooldown
+    //
+    // Websites share the app's cooldown so a failed attempt can't just be
+    // retried on the spot. Keys match `BlockedTarget.id` (`web-<domain>`).
+
+    private func cooldownKey(_ domain: String?) -> String? {
+        guard let domain, !domain.isEmpty else { return nil }
+        let normalized = SettingsStore.normalizeDomain(domain)
+        return normalized.isEmpty ? nil : "web-\(normalized)"
+    }
+
+    private func cooldownRemaining(domain: String?) async -> Int? {
+        guard let key = cooldownKey(domain) else { return nil }
+        return await MainActor.run { store.cooldownRemaining(for: key) }
+    }
+
+    private func startCooldown(domain: String?) async {
+        guard let key = cooldownKey(domain) else { return }
+        await MainActor.run { store.startCooldown(for: key) }
+    }
+
+    private func cooldownJSON(_ seconds: Int) -> String {
+        let message = "Cooling down. \(AppBlockerService.formatWait(seconds)) before you can try again."
+        let payload = (try? JSONSerialization.data(withJSONObject: [
+            "error": message, "cooldown_seconds": seconds
+        ])).flatMap { String(data: $0, encoding: .utf8) }
+        return payload ?? #"{"error":"Cooling down."}"#
+    }
+
+    static func queryItems(from path: String) -> [String: String] {
+        guard let mark = path.firstIndex(of: "?") else { return [:] }
+        return path[path.index(after: mark)...]
+            .components(separatedBy: "&")
+            .reduce(into: [:]) { result, pair in
+                let halves = pair.components(separatedBy: "=")
+                guard halves.count == 2, !halves[0].isEmpty else { return }
+                result[halves[0]] = halves[1].removingPercentEncoding ?? halves[1]
+            }
     }
 
     private func jsonObject(from body: String?) -> [String: Any]? {

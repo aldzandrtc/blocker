@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Shared petition flow. Used anywhere the student tries to weaken their own
-/// setup — striking a blocklist entry, or loosening the timings.
+/// Shared appeal flow. Used anywhere the student tries to weaken their own
+/// setup — removing something from the blocklist, or loosening the limits.
 struct ConvinceSheet: View {
     let headline: String
     /// What is being asked for, shown to the student and sent to the judge.
@@ -15,6 +15,7 @@ struct ConvinceSheet: View {
     @State private var isBusy = false
     @State private var result: AiJudgment?
     @State private var timeRemaining = 120
+    @FocusState private var argumentFocused: Bool
 
     private let timeLimit = 120
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -27,9 +28,9 @@ struct ConvinceSheet: View {
                 petition
             }
         }
-        .frame(width: 440, height: 390)
-        .background(Palette.paper)
-        .foregroundStyle(Palette.ink)
+        .frame(width: 460, height: 420)
+        .background(Palette.canvas)
+        .foregroundStyle(Palette.text)
         .onReceive(timer) { _ in tick() }
     }
 
@@ -37,86 +38,100 @@ struct ConvinceSheet: View {
 
     private var petition: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .top, spacing: 14) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text(headline)
-                        .font(Face.display(20, .semibold))
-                    Text("The default answer is deny.")
+                        .font(Face.display(19, .bold))
+                    Text("The judge starts from no.")
                         .font(Face.body(11.5))
-                        .foregroundStyle(Palette.muted)
+                        .foregroundStyle(Palette.secondary)
                 }
-                Spacer(minLength: 14)
+                Spacer(minLength: 8)
                 Countdown(remaining: timeRemaining, total: timeLimit)
             }
-            Rule(color: Palette.ink, weight: 2)
-                .padding(.top, 11)
+            .padding(.bottom, 12)
 
-            Text(request)
-                .font(Face.body(12.5))
-                .foregroundStyle(Palette.muted)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.vertical, 13)
-
-            SectionRule(title: "Statement")
-            ZStack(alignment: .topLeading) {
-                TextEditor(text: $argument)
-                    .font(Face.body(12.5))
-                    .scrollContentBackground(.hidden)
-                    .padding(.top, 8)
-                    .disabled(isBusy)
-
-                if argument.isEmpty {
-                    Text("Be specific. Name the deadline.")
-                        .font(Face.body(12.5))
-                        .foregroundStyle(Palette.faint)
-                        .padding(.top, 13)
-                        .padding(.leading, 5)
-                        .allowsHitTesting(false)
+            Card(padding: 11, tint: Palette.warning) {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Palette.warning)
+                    Text(request)
+                        .font(Face.body(12))
+                        .foregroundStyle(Palette.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
+            .padding(.bottom, 12)
+
+            Text("Your argument")
+                .font(Face.body(11, .medium))
+                .foregroundStyle(Palette.secondary)
+                .padding(.bottom, 6)
+
+            Card(padding: 0) {
+                ZStack(alignment: .topLeading) {
+                    TextEditor(text: $argument)
+                        .font(Face.body(12.5))
+                        .scrollContentBackground(.hidden)
+                        .padding(10)
+                        .focused($argumentFocused)
+                        .disabled(isBusy)
+
+                    if argument.isEmpty {
+                        Text("Be specific. Name the deadline.")
+                            .font(Face.body(12.5))
+                            .foregroundStyle(Palette.tertiary)
+                            .padding(.horizontal, 15)
+                            .padding(.vertical, 18)
+                            .allowsHitTesting(false)
+                    }
+                }
+                .frame(maxHeight: .infinity)
+            }
             .frame(maxHeight: .infinity)
-            Rule()
 
             HStack {
                 Button("Cancel") { isPresented = false }
-                    .buttonStyle(PlainActionStyle())
+                    .buttonStyle(GhostButtonStyle())
                     .keyboardShortcut(.escape, modifiers: [])
                 Spacer()
                 if isBusy {
-                    Text("DELIBERATING")
-                        .font(Face.clerk(9, .semibold))
-                        .tracking(1.6)
-                        .foregroundStyle(Palette.muted)
+                    HStack(spacing: 7) {
+                        ProgressView().controlSize(.small)
+                        Text("Considering it")
+                            .font(Face.body(11.5))
+                            .foregroundStyle(Palette.secondary)
+                    }
                 } else {
                     Button("Submit argument") { submit() }
-                        .buttonStyle(SealButtonStyle(tint: Palette.seal))
+                        .buttonStyle(PrimaryButtonStyle(tint: Palette.danger))
                         .disabled(argument.trimmingCharacters(in: .whitespaces).isEmpty)
-                        .keyboardShortcut(.return)
+                        .keyboardShortcut(.return, modifiers: .command)
                 }
             }
             .padding(.top, 14)
         }
-        .padding(22)
+        .padding(20)
+        .onAppear { argumentFocused = true }
     }
 
     // MARK: - Verdict
 
     private func verdict(_ result: AiJudgment) -> some View {
-        let tint = result.allowed ? Palette.verdigris : Palette.seal
-
-        return VStack(spacing: 0) {
+        VStack(spacing: 0) {
             Spacer()
-            Stamp(text: result.allowed ? approvedTitle : "Denied", tint: tint)
+            Verdict(granted: result.allowed, title: result.allowed ? approvedTitle : "Denied")
             Text(result.reason)
-                .font(Face.display(14))
-                .foregroundStyle(Palette.muted)
+                .font(Face.body(12.5))
+                .foregroundStyle(Palette.secondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 34)
-                .padding(.top, 24)
+                .padding(.top, 18)
             Spacer()
             Button("Close") { isPresented = false }
-                .buttonStyle(OutlineButtonStyle(tint: Palette.ink))
+                .buttonStyle(PrimaryButtonStyle(tint: result.allowed ? Palette.success : Palette.accent))
                 .keyboardShortcut(.return)
                 .padding(.bottom, 24)
         }
@@ -130,7 +145,7 @@ struct ConvinceSheet: View {
         if timeRemaining > 0 {
             timeRemaining -= 1
         } else {
-            result = AiJudgment(allowed: false, reason: "Time expired. Denied automatically.")
+            result = AiJudgment(allowed: false, reason: "Time ran out. Denied automatically.")
         }
     }
 
@@ -154,9 +169,9 @@ struct RemoveGatekeeperSheet: View {
 
     var body: some View {
         ConvinceSheet(
-            headline: "Petition to strike",
-            request: "You ask that \(target.displayName) be struck from the blocklist entirely.",
-            approvedTitle: "Struck",
+            headline: "Remove \(target.displayName)?",
+            request: "You're asking to take \(target.displayName) off the blocklist entirely — no gatekeeper, no question, no judge.",
+            approvedTitle: "Removed",
             judge: { argument in
                 let judge = BlocklistJudge(client: settings.makeClient())
                 return await judge.judgeSettingChange(
@@ -172,8 +187,8 @@ struct RemoveGatekeeperSheet: View {
 
 // MARK: - Timing changes
 
-/// Loosening the timings is the easiest way to defang the whole app, so the
-/// same judge that guards the blocklist guards these two numbers.
+/// Loosening the limits is the easiest way to defang the whole app, so the same
+/// judge that guards the blocklist guards these two numbers.
 struct TimingChangeSheet: View {
     let settings: SettingsStore
     @Binding var isPresented: Bool
@@ -217,9 +232,9 @@ struct TimingChangeSheet: View {
     var body: some View {
         if arguing {
             ConvinceSheet(
-                headline: "Petition to amend",
-                request: "You ask to \(changeDescription).",
-                approvedTitle: "Amended",
+                headline: "Loosen your limits?",
+                request: "You're asking to \(changeDescription).",
+                approvedTitle: "Changed",
                 judge: { argument in
                     let judge = BlocklistJudge(client: settings.makeClient())
                     return await judge.judgeSettingChange(change: changeDescription, argument: argument)
@@ -234,42 +249,45 @@ struct TimingChangeSheet: View {
 
     private var adjustView: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("Standing orders")
-                .font(Face.display(20, .semibold))
-            Rule(color: Palette.ink, weight: 2)
-                .padding(.top, 11)
-
-            Text("Tightening takes effect at once. Loosening must be argued.")
+            Text("Limits")
+                .font(Face.display(19, .bold))
+            Text("Tightening applies immediately. Loosening has to be argued.")
                 .font(Face.body(11.5))
-                .foregroundStyle(Palette.muted)
-                .padding(.vertical, 13)
-                .fixedSize(horizontal: false, vertical: true)
+                .foregroundStyle(Palette.secondary)
+                .padding(.top, 3)
+                .padding(.bottom, 16)
 
             dial(title: "Unblock window",
-                 caption: "How long a target stays open once you pass.",
+                 caption: "How long a target stays open once you're through.",
                  value: $unblock, range: 5...120, step: 5,
                  current: currentUnblock, looserWhenHigher: true)
 
-            Spacer().frame(height: 18)
+            Spacer().frame(height: 16)
 
             dial(title: "Cooldown",
-                 caption: "Minimum wait before the gate can be challenged again.",
+                 caption: "How long you wait after a failed attempt.",
                  value: $cooldown, range: 1...30, step: 1,
                  current: currentCooldown, looserWhenHigher: false)
 
             Spacer(minLength: 14)
 
             if changed && weakens {
-                Text("This weakens your own orders. The judge decides.")
-                    .font(Face.body(11))
-                    .foregroundStyle(Palette.seal)
-                    .padding(.bottom, 10)
+                Card(padding: 10, tint: Palette.danger) {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Palette.danger)
+                        Text("This weakens your own limits, so the judge decides.")
+                            .font(Face.body(11.5))
+                            .foregroundStyle(Palette.secondary)
+                    }
+                }
+                .padding(.bottom, 10)
             }
 
-            Rule()
             HStack {
                 Button("Cancel") { isPresented = false }
-                    .buttonStyle(PlainActionStyle())
+                    .buttonStyle(GhostButtonStyle())
                     .keyboardShortcut(.escape, modifiers: [])
                 Spacer()
                 Button(weakens ? "Argue your case" : "Apply") {
@@ -280,16 +298,16 @@ struct TimingChangeSheet: View {
                         isPresented = false
                     }
                 }
-                .buttonStyle(SealButtonStyle(tint: weakens ? Palette.seal : Palette.ink))
+                .buttonStyle(PrimaryButtonStyle(tint: weakens ? Palette.danger : Palette.accent))
                 .disabled(!changed)
                 .keyboardShortcut(.return)
             }
-            .padding(.top, 14)
+            .padding(.top, 12)
         }
-        .padding(22)
-        .frame(width: 440, height: 390)
-        .background(Palette.paper)
-        .foregroundStyle(Palette.ink)
+        .padding(20)
+        .frame(width: 460, height: 420)
+        .background(Palette.canvas)
+        .foregroundStyle(Palette.text)
     }
 
     private func dial(title: String, caption: String, value: Binding<Double>,
@@ -297,37 +315,37 @@ struct TimingChangeSheet: View {
                       current: Int, looserWhenHigher: Bool) -> some View {
         let proposed = Int(value.wrappedValue)
         let isLooser = looserWhenHigher ? proposed > current : proposed < current
-        let tint = proposed == current ? Palette.ink : (isLooser ? Palette.seal : Palette.verdigris)
+        let tint = proposed == current ? Palette.accent : (isLooser ? Palette.danger : Palette.success)
 
-        return VStack(alignment: .leading, spacing: 7) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(title.uppercased())
-                    .font(Face.clerk(9, .semibold))
-                    .tracking(1.3)
-                    .foregroundStyle(Palette.muted)
-                Spacer()
-                if proposed != current {
-                    Text("\(current)")
-                        .font(Face.clerk(11))
-                        .foregroundStyle(Palette.faint)
-                        .strikethrough()
-                    Text("→")
-                        .font(Face.clerk(10))
-                        .foregroundStyle(Palette.faint)
+        return Card {
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(title)
+                        .font(Face.body(12, .semibold))
+                    Spacer()
+                    if proposed != current {
+                        Text("\(current)")
+                            .font(Face.body(11))
+                            .foregroundStyle(Palette.tertiary)
+                            .strikethrough()
+                        Image(systemName: "arrow.right")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(Palette.tertiary)
+                    }
+                    Text("\(proposed)")
+                        .font(Face.display(18, .bold))
+                        .foregroundStyle(tint)
+                    Text("min")
+                        .font(Face.body(10.5))
+                        .foregroundStyle(Palette.tertiary)
                 }
-                Text("\(proposed)")
-                    .font(Face.display(20, .medium))
-                    .foregroundStyle(tint)
-                Text("min")
-                    .font(Face.clerk(9))
-                    .foregroundStyle(Palette.faint)
+                Slider(value: value, in: range, step: step)
+                    .controlSize(.small)
+                    .tint(tint)
+                Text(caption)
+                    .font(Face.body(10.5))
+                    .foregroundStyle(Palette.tertiary)
             }
-            Slider(value: value, in: range, step: step)
-                .controlSize(.mini)
-                .tint(tint)
-            Text(caption)
-                .font(Face.body(10.5))
-                .foregroundStyle(Palette.faint)
         }
     }
 
